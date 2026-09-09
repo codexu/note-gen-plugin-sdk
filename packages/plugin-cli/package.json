@@ -1,0 +1,66 @@
+{
+  "name": "@notegen/plugin-cli",
+  "version": "0.1.0",
+  "description": "Create, validate, build, package, sign, and verify NoteGen plugins.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "notegen-plugin": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "prepack": "pnpm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codexu/note-gen-plugin-sdk.git",
+    "directory": "packages/plugin-cli"
+  },
+  "homepage": "https://notegen.top",
+  "bugs": {
+    "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
+  },
+  "dependencies": {
+    "@notegen/plugin-api": "workspace:^",
+    "canonicalize": "^4.0.0",
+    "commander": "^14.0.3",
+    "es-module-lexer": "^3.0.2",
+    "esbuild": "^0.28.2",
+    "jsonc-parser": "^3.3.1",
+    "semver": "^7.8.5",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/semver": "^7.8.0",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.20.0"
+}

@@ -1,0 +1,45 @@
+{
+  "name": "create-notegen-plugin",
+  "version": "0.1.0",
+  "description": "Create a NoteGen plugin project.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "create-notegen-plugin": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "prepack": "pnpm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codexu/note-gen-plugin-sdk.git",
+    "directory": "packages/create-notegen-plugin"
+  },
+  "homepage": "https://notegen.top",
+  "bugs": {
+    "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
+  },
+  "dependencies": {
+    "@notegen/plugin-cli": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.20.0"
+}

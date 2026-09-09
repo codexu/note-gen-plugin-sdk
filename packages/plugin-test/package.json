@@ -1,0 +1,53 @@
+{
+  "name": "@notegen/plugin-test",
+  "version": "0.1.0",
+  "description": "In-process test host for NoteGen plugins.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "prepack": "pnpm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codexu/note-gen-plugin-sdk.git",
+    "directory": "packages/plugin-test"
+  },
+  "homepage": "https://notegen.top",
+  "bugs": {
+    "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
+  },
+  "dependencies": {
+    "@notegen/plugin-api": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.20.0"
+}

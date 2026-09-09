@@ -1,0 +1,100 @@
+name: Publish npm packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 10.20.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Confirm a clean release commit
+        run: git diff --exit-code
+      - name: Verify immutable package contents and publish in dependency order
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::Configure the protected npm environment's NPM_TOKEN with a valid granular publish token before running this workflow."
+            exit 1
+          fi
+          release_directory="$(mktemp -d "$RUNNER_TEMP/notegen-sdk-release.XXXXXX")"
+          packages_to_publish=()
+
+          prepare_package() {
+            local package_directory="$1"
+            local package_file="$package_directory/package.json"
+            local name version archive local_integrity published_integrity
+            name="$(node -p 'require("./" + process.argv[1]).name' "$package_file")"
+            version="$(node -p 'require("./" + process.argv[1]).version' "$package_file")"
+            archive="$release_directory/$(basename "$package_directory").tgz"
+
+            # pnpm rewrites workspace dependencies before creating this exact
+            # tarball; npm must publish it without repacking the source directory.
+            pnpm --dir "$package_directory" pack --out "$archive"
+            git diff --exit-code
+            local_integrity="$(node -e 'const fs = require("node:fs"); const crypto = require("node:crypto"); process.stdout.write("sha512-" + crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"));' "$archive")"
+            if npm view "$name@$version" dist.integrity --json --registry https://registry.npmjs.org >"$release_directory/registry.json" 2>"$release_directory/registry-error.json"; then
+              published_integrity="$(node -e 'const value = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); if (typeof value !== "string" || !value.startsWith("sha512-")) process.exit(1); process.stdout.write(value);' "$release_directory/registry.json")"
+              if [[ "$published_integrity" != "$local_integrity" ]]; then
+                echo "::error::$name@$version already exists with different package bytes. Bump its version and affected dependency ranges before publishing."
+                exit 1
+              fi
+              echo "Verified identical published bytes; skipping $name@$version"
+              return
+            fi
+
+            # Only an explicit registry E404 means first publication. Network,
+            # authentication and malformed responses must not trigger a publish.
+            if ! node - "$release_directory/registry.json" "$release_directory/registry-error.json" <<'NODE'
+          const fs = require('node:fs');
+          const codes = process.argv.slice(2).flatMap((path) => {
+            try {
+              const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+              return typeof value?.error?.code === 'string' ? [value.error.code] : [];
+            } catch {
+              return [];
+            }
+          });
+          if (codes.length === 0 || codes.some((code) => code !== 'E404')) process.exit(1);
+          NODE
+            then
+              echo "::error::Cannot determine registry state for $name@$version. Resolve the npm lookup error before retrying."
+              exit 1
+            fi
+            packages_to_publish+=("$archive")
+          }
+
+          # Complete every preflight before publishing any package, so a missing
+          # version bump does not leave a partially released dependency graph.
+          prepare_package packages/plugin-api
+          prepare_package packages/plugin-cli
+          prepare_package packages/plugin-test
+          prepare_package packages/create-notegen-plugin
+
+          for archive in "${packages_to_publish[@]}"; do
+            npm publish "$archive" --access public --provenance --ignore-scripts --registry https://registry.npmjs.org
+          done

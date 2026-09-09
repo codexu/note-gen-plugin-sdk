@@ -1,0 +1,38 @@
+name: Host contract parity
+on:
+  workflow_dispatch:
+    inputs:
+      host_ref:
+        description: Reviewed full NoteGen host commit SHA
+        type: string
+        required: true
+  pull_request:
+    paths:
+      - 'packages/plugin-api/**'
+      - '.github/workflows/host-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/plugin-api/**'
+      - '.github/workflows/host-contract.yml'
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+      - name: Require a reviewed host commit
+        env:
+          HOST_REF: ${{ inputs.host_ref || vars.PLUGIN_HOST_REF }}
+        run: |
+          if [[ ! "$HOST_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::Set PLUGIN_HOST_REF to the full reviewed NoteGen commit SHA.'
+            exit 1
+          fi
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          repository: codexu/note-gen
+          ref: ${{ inputs.host_ref || vars.PLUGIN_HOST_REF }}
+          path: .plugin-host-contract
+      - run: python3 .plugin-host-contract/scripts/check-plugin-contract.py --sdk .

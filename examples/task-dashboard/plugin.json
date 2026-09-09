@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.task-dashboard",
+  "name": "Task Dashboard Example",
+  "description": "Paged Markdown task list with revision-checked completion.",
+  "version": "0.1.0",
+  "apiVersion": "^0.1.0",
+  "minAppVersion": "0.37.0",
+  "platforms": ["desktop"],
+  "entry": "dist/main.js",
+  "activationEvents": ["onCommand:com.example.task-dashboard.open"],
+  "permissions": {
+    "notes.list": { "scope": "workspace-folder" },
+    "notes.read": { "scope": "workspace-folder" },
+    "notes.write": { "scope": "workspace-folder", "description": "Mark tasks complete in closed notes." }
+  },
+  "contributes": {
+    "commands": [
+      { "id": "com.example.task-dashboard.open", "title": "任务面板" },
+      { "id": "com.example.task-dashboard.refresh", "title": "刷新任务" },
+      { "id": "com.example.task-dashboard.next", "title": "下一页笔记" },
+      { "id": "com.example.task-dashboard.complete", "title": "完成任务" }
+    ],
+    "views": [
+      { "id": "com.example.task-dashboard.view", "title": "任务面板", "location": "right-sidebar" }
+    ]
+  },
+  "license": "MIT"
+}

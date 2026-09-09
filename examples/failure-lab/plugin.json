@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.failure-lab",
+  "name": "插件异常实验室",
+  "description": "隔离环境手动故障注入；仅点击命令时触发，不访问文件或网络。",
+  "version": "0.1.0",
+  "apiVersion": "^0.1.0",
+  "minAppVersion": "0.37.0",
+  "platforms": ["desktop"],
+  "entry": "dist/main.js",
+  "activationEvents": ["onCommand:com.example.failure-lab.open"],
+  "permissions": {},
+  "contributes": {
+    "commands": [
+      { "id": "com.example.failure-lab.open", "title": "打开异常实验室" },
+      { "id": "com.example.failure-lab.throw", "title": "触发普通异常" },
+      { "id": "com.example.failure-lab.loop", "title": "触发死循环超时" },
+      { "id": "com.example.failure-lab.memory", "title": "触发内存超限" },
+      { "id": "com.example.failure-lab.logs", "title": "写入诊断日志" },
+      { "id": "com.example.failure-lab.quota", "title": "触发 RPC 超额" }
+    ],
+    "views": [{ "id": "com.example.failure-lab.view", "title": "异常实验室", "location": "editor-tab" }]
+  },
+  "license": "MIT"
+}

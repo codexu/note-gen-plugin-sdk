@@ -1,0 +1,33 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.interaction-lab",
+  "name": "插件交互实验室",
+  "description": "仅用于隔离工作区：表单、弹窗、状态栏与 PluginLab/fixture.md 读写验证。",
+  "version": "0.1.0",
+  "apiVersion": "^0.1.0",
+  "minAppVersion": "0.37.0",
+  "platforms": ["desktop"],
+  "entry": "dist/main.js",
+  "activationEvents": ["onCommand:com.example.interaction-lab.open"],
+  "permissions": {
+    "notes.create": { "scope": "workspace-folder" },
+    "notes.read": { "scope": "workspace-folder" },
+    "notes.write": { "scope": "workspace-folder" },
+    "notes.delete": { "scope": "workspace-folder" }
+  },
+  "contributes": {
+    "commands": [
+      { "id": "com.example.interaction-lab.open", "title": "打开交互实验室" },
+      { "id": "com.example.interaction-lab.save", "title": "保存实验室表单" },
+      { "id": "com.example.interaction-lab.dialog", "title": "打开实验室弹窗" },
+      { "id": "com.example.interaction-lab.confirm", "title": "确认实验室弹窗" },
+      { "id": "com.example.interaction-lab.create", "title": "创建固定测试笔记" },
+      { "id": "com.example.interaction-lab.write", "title": "追加固定测试笔记" },
+      { "id": "com.example.interaction-lab.stale", "title": "验证过期 revision 被拒绝" },
+      { "id": "com.example.interaction-lab.trash", "title": "移除固定测试笔记到废纸篓" }
+    ],
+    "views": [{ "id": "com.example.interaction-lab.view", "title": "交互实验室", "location": "editor-tab" }],
+    "statusBar": [{ "id": "com.example.interaction-lab.status", "alignment": "right" }]
+  },
+  "license": "MIT"
+}

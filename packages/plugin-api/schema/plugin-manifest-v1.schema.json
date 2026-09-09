@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://notegen.top/schemas/plugin-manifest-v1.schema.json",
+  "title": "NoteGen Plugin Manifest v1",
+  "description": "Editor schema for plugin.json. The NoteGen CLI remains authoritative for semantic, localization, compatibility, and package-file validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "id",
+    "name",
+    "version",
+    "apiVersion",
+    "minAppVersion",
+    "platforms",
+    "entry",
+    "activationEvents",
+    "permissions",
+    "contributes"
+  ],
+  "properties": {
+    "manifestVersion": { "const": 1 },
+    "id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^(?!app\\.notegen(?:\\.|$))(?=.{3,160}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "name": { "$ref": "#/$defs/pluginName" },
+    "description": { "$ref": "#/$defs/pluginDescription" },
+    "version": { "$ref": "#/$defs/semver" },
+    "apiVersion": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^(?:(?:>=|<=|\\^|~|>|<) *)?(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "minAppVersion": { "$ref": "#/$defs/semver" },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "enum": ["desktop", "ios", "android"] },
+      "contains": { "const": "desktop" }
+    },
+    "entry": { "$ref": "#/$defs/entryPath" },
+    "activationEvents": {
+      "type": "array",
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {
+        "anyOf": [
+          { "enum": ["onEditor:markdown", "onWorkspace:open", "onNotes:change"] },
+          { "type": "string", "pattern": "^onCommand:[A-Za-z0-9._-]+$", "maxLength": 240 }
+        ]
+      }
+    },
+    "permissions": { "$ref": "#/$defs/permissions" },
+    "contributes": { "$ref": "#/$defs/contributions" },
+    "defaultLocale": { "$ref": "#/$defs/localeTag" },
+    "locales": {
+      "type": "object",
+      "maxProperties": 50,
+      "propertyNames": { "$ref": "#/$defs/localeTag" },
+      "additionalProperties": { "$ref": "#/$defs/packagePath" }
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "url": { "$ref": "#/$defs/publicUrl" }
+      }
+    },
+    "repository": { "$ref": "#/$defs/publicUrl" },
+    "license": { "type": "string", "minLength": 1, "maxLength": 80 }
+  },
+  "$defs": {
+    "pluginName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "pluginDescription": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "localizedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "semver": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "namespacedId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 220,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "packagePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "entryPath": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 240,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+\\.js$"
+    },
+    "localeTag": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 35,
+      "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+    },
+    "publicUrl": {
+      "type": "string",
+      "maxLength": 500,
+      "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://"
+    },
+    "permission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope"],
+      "properties": {
+        "scope": { "type": "string" },
+        "optional": { "type": "boolean" },
+        "description": { "$ref": "#/$defs/localizedText" }
+      }
+    },
+    "activeEditorPermission": {
+      "allOf": [
+        { "$ref": "#/$defs/permission" },
+        { "properties": { "scope": { "const": "active-editor" } } }
+      ]
+    },
+    "folderPermission": {
+      "allOf": [
+        { "$ref": "#/$defs/permission" },
+        { "properties": { "scope": { "const": "workspace-folder" } } }
+      ]
+    },
+    "filePermission": {
+      "allOf": [
+        { "$ref": "#/$defs/permission" },
+        { "properties": { "scope": { "enum": ["workspace-file", "workspace-files", "workspace-folder"] } } }
+      ]
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "editor.read": { "$ref": "#/$defs/activeEditorPermission" },
+        "editor.write": { "$ref": "#/$defs/activeEditorPermission" },
+        "notes.read": { "$ref": "#/$defs/filePermission" },
+        "notes.create": { "$ref": "#/$defs/folderPermission" },
+        "notes.open": { "$ref": "#/$defs/folderPermission" },
+        "notes.list": { "$ref": "#/$defs/folderPermission" },
+        "notes.write": { "$ref": "#/$defs/filePermission" },
+        "attachments.read": { "$ref": "#/$defs/filePermission" },
+        "attachments.create": { "$ref": "#/$defs/folderPermission" },
+        "notes.delete": { "$ref": "#/$defs/filePermission" },
+        "notes.move": { "$ref": "#/$defs/folderPermission" },
+        "network.fetch": {
+          "allOf": [
+            { "$ref": "#/$defs/permission" },
+            { "properties": { "scope": { "const": "network-origins" } } }
+          ]
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/namespacedId" },
+        "title": { "$ref": "#/$defs/localizedText" },
+        "description": { "$ref": "#/$defs/localizedText" },
+        "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 },
+        "suggestedShortcut": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "settingCommon": {
+      "type": "object",
+      "required": ["key", "type", "scope", "title", "default"],
+      "properties": {
+        "key": { "$ref": "#/$defs/namespacedId" },
+        "scope": { "enum": ["device", "workspace"] },
+        "title": { "$ref": "#/$defs/localizedText" },
+        "description": { "$ref": "#/$defs/localizedText" }
+      }
+    },
+    "setting": {
+      "oneOf": [
+        {
+          "allOf": [{ "$ref": "#/$defs/settingCommon" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "$ref": "#/$defs/namespacedId" }, "type": { "const": "boolean" },
+            "scope": { "enum": ["device", "workspace"] }, "title": { "$ref": "#/$defs/localizedText" },
+            "description": { "$ref": "#/$defs/localizedText" }, "default": { "type": "boolean" }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingCommon" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "$ref": "#/$defs/namespacedId" }, "type": { "const": "string" },
+            "scope": { "enum": ["device", "workspace"] }, "title": { "$ref": "#/$defs/localizedText" },
+            "description": { "$ref": "#/$defs/localizedText" }, "default": { "type": "string" },
+            "placeholder": { "$ref": "#/$defs/localizedText" },
+            "maxLength": { "type": "integer", "minimum": 1, "maximum": 65536 },
+            "permissionPaths": { "type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": { "type": "string" } }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingCommon" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "$ref": "#/$defs/namespacedId" }, "type": { "const": "number" },
+            "scope": { "enum": ["device", "workspace"] }, "title": { "$ref": "#/$defs/localizedText" },
+            "description": { "$ref": "#/$defs/localizedText" }, "default": { "type": "number" },
+            "min": { "type": "number" }, "max": { "type": "number" },
+            "step": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingCommon" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "$ref": "#/$defs/namespacedId" }, "type": { "const": "select" },
+            "scope": { "enum": ["device", "workspace"] }, "title": { "$ref": "#/$defs/localizedText" },
+            "description": { "$ref": "#/$defs/localizedText" }, "default": { "type": "string" },
+            "options": {
+              "type": "array", "minItems": 1, "maxItems": 100,
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["label", "value"],
+                "properties": { "label": { "$ref": "#/$defs/localizedText" }, "value": { "type": "string", "minLength": 1, "maxLength": 160 } }
+              }
+            }
+          },
+          "required": ["options"]
+        },
+        {
+          "allOf": [{ "$ref": "#/$defs/settingCommon" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": { "$ref": "#/$defs/namespacedId" }, "type": { "enum": ["workspace-file", "workspace-folder"] },
+            "scope": { "const": "workspace" }, "title": { "$ref": "#/$defs/localizedText" },
+            "description": { "$ref": "#/$defs/localizedText" }, "default": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "statusBar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "alignment"],
+      "properties": {
+        "id": { "$ref": "#/$defs/namespacedId" },
+        "alignment": { "enum": ["left", "right"] },
+        "priority": { "type": "integer", "minimum": -10000, "maximum": 10000 },
+        "command": { "$ref": "#/$defs/namespacedId" }
+      }
+    },
+    "menu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["location", "command"],
+      "properties": {
+        "location": { "enum": ["editor/slash", "editor/context", "file/context", "mobile/writing/overflow"] },
+        "command": { "$ref": "#/$defs/namespacedId" },
+        "when": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "group": { "type": "string", "minLength": 1, "maxLength": 80 }
+      }
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "location"],
+      "properties": {
+        "id": { "$ref": "#/$defs/namespacedId" },
+        "title": { "$ref": "#/$defs/localizedText" },
+        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab"] },
+        "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 }
+      }
+    },
+    "contributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/command" } },
+        "settings": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/setting" } },
+        "statusBar": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/statusBar" } },
+        "menus": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/menu" } },
+        "views": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/view" } }
+      }
+    }
+  }
+}

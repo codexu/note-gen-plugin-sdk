@@ -24,23 +24,19 @@ jobs:
           version: 10.20.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      - name: Install npm with Trusted Publishing support
+        run: npm install --global npm@11 --ignore-scripts
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - name: Confirm a clean release commit
         run: git diff --exit-code
       - name: Verify immutable package contents and publish in dependency order
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::Configure the protected npm environment's NPM_TOKEN with a valid granular publish token before running this workflow."
-            exit 1
-          fi
           release_directory="$(mktemp -d "$RUNNER_TEMP/notegen-sdk-release.XXXXXX")"
           packages_to_publish=()
 

@@ -178,18 +178,21 @@ authentication errors stop the release. The verified tarballs are then
 published in dependency order: API, CLI, test host, then the project creator.
 A network failure after a partial release can be resumed from the same commit.
 
-Before the first release, confirm that the publishing account controls the
-`@notegen` scope and can publish `create-notegen-plugin`. Create the protected
-GitHub environment `npm`, require reviewer approval, and add its `NPM_TOKEN`
-secret. This token-based workflow needs a valid granular token with package
-read/write access covering all four package names and publishing-compatible
-2FA settings. Organization-administration access alone does not grant package
-publishing rights. Legacy automation tokens are no longer supported; follow
-[npm's granular-token instructions](https://docs.npmjs.com/creating-and-viewing-access-tokens/)
-and rotate the token before it expires. Do not weaken an organization's
-mandatory interactive-2FA policy to run this workflow: adopt npm trusted or
-staged publishing instead. Package provenance is enabled in every package's
-`publishConfig`; provenance alone does not configure token-free publishing.
+The workflow uses npm Trusted Publishing (OIDC) with Node.js 24 and npm 11;
+it does not read an `NPM_TOKEN` secret. Configure a GitHub Actions trusted
+publisher in each of the four packages' npm settings with owner `codexu`,
+repository `note-gen-plugin-sdk`, workflow filename `publish.yml`, environment
+`npm`, and **Allow npm publish** enabled. The workflow's `id-token: write`
+permission supplies the short-lived publishing identity. Keep the GitHub
+environment `npm` and configure reviewer approval if required by your team.
+Package provenance is enabled in every package's `publishConfig`.
+
+All four packages have completed their initial publication. A new package
+must first exist on npm before its trusted publisher can be configured;
+bootstrap that package separately before adding it to this OIDC workflow.
+After verifying a real release through OIDC, revoke any bootstrap token and
+remove the unused `NPM_TOKEN` secret. See
+[npm's Trusted Publishing instructions](https://docs.npmjs.com/trusted-publishers/).
 
 For each release:
 

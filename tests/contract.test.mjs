@@ -287,6 +287,10 @@ test('nested UI validates command ownership and unique identities', async () => 
     ] },
   ] })
   assert.equal(flattenPluginUiBlocks(host.views['com.example.contract.view'].blocks).length, 3)
+  const normalized = host.views['com.example.contract.view'].blocks[0]
+  assert.equal(Object.hasOwn(normalized, 'collapsible'), false)
+  assert.equal(Object.hasOwn(normalized.blocks[0].actions[0], 'argument'), false)
+  assert.equal(Object.hasOwn(normalized.blocks[1].items[0], 'description'), false)
   await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks: [{ type: 'section', id: 'section', title: 'Details', blocks: [{ type: 'toolbar', id: 'tools', label: 'Actions', actions: [{ ...action, command: 'other.plugin.command' }] }] }] }), error => error.code === 'PermissionDenied')
   await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks: [{ type: 'item-list', id: 'items', generation: '1', label: 'Items', emptyText: '', items: [{ id: 'same', label: 'A' }, { id: 'same', label: 'B' }] }] }), error => error.code === 'InvalidPath')
   let blocks = [{ type: 'text', text: 'deep' }]

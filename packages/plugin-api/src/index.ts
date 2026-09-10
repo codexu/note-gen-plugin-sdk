@@ -838,6 +838,14 @@ export function flattenPluginUiBlocks(blocks: readonly PluginUiBlock[]): PluginU
 
 /** Shared validation used by NoteGen and the SDK's in-memory host. */
 export function parsePluginUiExtension(value: unknown, parseChildren: (value: unknown) => readonly PluginUiBlock[]): PluginExtendedUiBlock | undefined {
+  const parsed = parsePluginUiExtensionValue(value, parseChildren)
+  // Validation constructs optional fields explicitly. Omit absent fields from
+  // the normalized result so snapshots remain valid JSON on both host paths.
+  // Raw input and command arguments are validated before this normalization.
+  return parsed === undefined ? undefined : JSON.parse(JSON.stringify(parsed)) as PluginExtendedUiBlock
+}
+
+function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unknown) => readonly PluginUiBlock[]): PluginExtendedUiBlock | undefined {
   const fail = (): never => { throw new PluginError('InvalidPath', 'Malformed extended plugin UI block') }
   const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : fail()
   const text = (value: unknown, max = 500, min = 1): string => typeof value === 'string' && value.length >= min && value.length <= max ? value : fail()

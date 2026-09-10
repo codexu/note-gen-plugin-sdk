@@ -21,12 +21,12 @@ project scaffold, build and package CLI, and an in-process test host.
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
 
-The current `@notegen/plugin-api` protocol is 0.1.0. It includes revision-safe
+The current `@notegen/plugin-api` protocol is 0.1.1. It includes revision-safe
 editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.
 
-API 0.1.0 also adds interactive forms, tables and trees, editor-area plugin tabs,
+The API also provides interactive forms, tables and trees, editor-area plugin tabs,
 view close/focus/visibility methods, saved-note search, and separately authorized
 attachment reads and non-overwriting creation. Batch range edits and selection
 control currently require source mode. See the API package README and website
@@ -254,3 +254,11 @@ This release adds editor selection/toolbar/tab menu contributions, menu conditio
 unified symbolic icons, and composable declarative UI. See the API README for the
 contract and limits. It requires the matching updated NoteGen host for new features;
 SDK publication does not publish NoteGen or any official plugin package.
+
+### 2026-09-10 package release
+
+`@notegen/plugin-api` and `@notegen/plugin-test` are version 0.1.2;
+`@notegen/plugin-cli` and `create-notegen-plugin` are version 0.1.3.
+The host protocol remains 0.1.1. This release publishes the updated
+`NoteSnapshot.modifiedAt` and item-list metadata contract and refreshes the
+SDK package dependency versions. Use the matching NoteGen host for these fields.

@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.0' as const
+export const PLUGIN_API_VERSION = '0.1.1' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -48,6 +48,7 @@ export interface PluginCommandContribution {
   title: string
   description?: string
   icon?: string
+  keywords?: readonly string[]
   suggestedShortcut?: string
 }
 
@@ -124,6 +125,9 @@ export interface PluginViewContribution {
 export type PluginMenuLocation =
   | 'editor/slash'
   | 'editor/context'
+  | 'editor/selection'
+  | 'editor/toolbar'
+  | 'tab/context'
   | 'file/context'
   | 'mobile/writing/overflow'
 
@@ -132,6 +136,9 @@ export interface PluginMenuContribution {
   command: string
   when?: string
   group?: string
+  order?: number
+  icon?: string
+  enableWhen?: string
 }
 
 export interface PluginContributions {
@@ -216,6 +223,8 @@ export interface ReadNoteOptions {
 }
 
 export interface OpenOrCreateNoteOptions {
+  /** Defaults to true. Set false with open: true to open an existing file using only notes.open. Missing files fail. */
+  create?: boolean
   workspaceId: string
   path: string
   initialContent: string
@@ -297,6 +306,8 @@ export interface NoteChangeEvent {
 }
 
 export interface ActiveEditorContext {
+  /** Workspace-relative Markdown path, when available. Never an absolute path. Requires editor.read. */
+  path?: string
   windowId: string
   editorId: string
   documentId: string
@@ -384,9 +395,9 @@ export type PluginFormField = {
   disabled?: boolean
   visibleWhen?: PluginFormCondition
 } & (
-  | { type: 'text' | 'textarea'; value?: string; placeholder?: string; maxLength?: number }
+  | { type: 'text' | 'textarea' | 'search' | 'date'; value?: string; placeholder?: string; maxLength?: number }
   | { type: 'number'; value?: number; min?: number; max?: number }
-  | { type: 'select'; value?: string; options: readonly { label: string; value: string }[] }
+  | { type: 'select' | 'note-picker'; value?: string; options: readonly { label: string; value: string }[] }
   | { type: 'checkbox'; value?: boolean }
 )
 
@@ -437,7 +448,27 @@ export type PluginTableCell = string | {
   disabled?: boolean
 }
 
+/** Host-rendered navigation list. Commands receive { generation, itemId? };
+ * reorder receives { generation, itemIds } containing the complete new order. */
+export interface PluginNavigationListBlock {
+  type: 'navigation-list'
+  id: string
+  generation: string
+  label: string
+  emptyText: string
+  addLabel: string
+  removeLabel: string
+  reorderLabel: string
+  items: readonly { id: string; label: string }[]
+  openCommand: string
+  addCommand: string
+  removeCommand: string
+  reorderCommand: string
+}
+
 export type PluginUiBlock =
+  | PluginExtendedUiBlock
+  | PluginNavigationListBlock
   | PluginFormBlock
   | { type: 'separator' }
   | { type: 'callout'; title: string; text: string; tone?: 'default' | 'destructive' }
@@ -700,4 +731,169 @@ export function definePluginManifest<const Manifest extends PluginManifestV1>(
   manifest: Manifest,
 ): Manifest {
   return manifest
+}
+
+/** Menu conditions are data, never JavaScript. && binds more tightly than ||.
+ * Supported atoms: boolean keys / !key, or key == value / key != value.
+ * No parentheses, property access, or executable expressions are accepted. */
+export interface PluginMenuContext {
+  editor?: 'markdown'
+  selection?: boolean
+  readOnly?: boolean
+  codeBlock?: boolean
+  resourceKind?: 'file' | 'folder' | 'root'
+  resourceExt?: string
+}
+const menuBooleanKeys = new Set(['selection', 'readOnly', 'codeBlock'])
+const menuStringKeys = new Set(['editor', 'resourceKind', 'resourceExt'])
+function parseMenuAtom(atom: string): { key: keyof PluginMenuContext; operator: string; value: string | boolean } | null {
+  const boolean = /^(!)?(selection|readOnly|codeBlock)$/.exec(atom.trim())
+  if (boolean) return { key: boolean[2] as keyof PluginMenuContext, operator: '==', value: !boolean[1] }
+  const comparison = /^(\w+)\s*(==|!=)\s*([\w.-]+)$/.exec(atom.trim())
+  if (!comparison) return null
+  const [, key, operator, value] = comparison
+  if (menuBooleanKeys.has(key) && (value === 'true' || value === 'false')) return { key: key as keyof PluginMenuContext, operator, value: value === 'true' }
+  if (menuStringKeys.has(key)) return { key: key as keyof PluginMenuContext, operator, value }
+  return null
+}
+export function isValidPluginMenuCondition(condition: string): boolean {
+  return condition.length > 0 && condition.length <= 240
+    && condition.split('||').every(group => group.split('&&').every(atom => parseMenuAtom(atom) !== null))
+}
+export function matchesPluginMenuCondition(condition: string | undefined, context: PluginMenuContext): boolean {
+  if (condition === undefined) return true
+  if (!isValidPluginMenuCondition(condition)) return false
+  return condition.split('||').some(group => group.split('&&').every(atom => {
+    const parsed = parseMenuAtom(atom)!
+    const actual = context[parsed.key]
+    if (actual === undefined) return false
+    return parsed.operator === '==' ? actual === parsed.value : actual !== parsed.value
+  }))
+}
+
+export interface PluginActionConfirmation {
+  title: string
+  description?: string
+  confirmLabel: string
+  cancelLabel: string
+}
+export interface PluginUiAction {
+  id: string
+  label: string
+  command: string
+  argument?: PluginCommandArgument
+  icon?: string
+  iconOnly?: boolean
+  confirmation?: PluginActionConfirmation
+  disabled?: boolean
+  variant?: 'default' | 'secondary' | 'destructive' | 'ghost' | 'outline'
+}
+export interface PluginItemListBlock {
+  type: 'item-list'
+  id: string
+  generation: string
+  label: string
+  emptyText: string
+  items: readonly { id: string; label: string; description?: string; icon?: string; checked?: boolean; disabled?: boolean }[]
+  openCommand?: string
+  toggleCommand?: string
+  reorderCommand?: string
+  reorderLabel?: string
+  actions?: readonly PluginUiAction[]
+}
+export type PluginExtendedUiBlock =
+  | PluginItemListBlock
+  | { type: 'layout'; id: string; direction?: 'row' | 'column'; gap?: 'small' | 'medium' | 'large'; blocks: readonly PluginUiBlock[] }
+  | { type: 'section'; id: string; title: string; collapsible?: boolean; defaultOpen?: boolean; blocks: readonly PluginUiBlock[] }
+  | { type: 'tabs'; id: string; label: string; tabs: readonly { id: string; label: string; blocks: readonly PluginUiBlock[] }[] }
+  | { type: 'toolbar'; id: string; label: string; actions: readonly PluginUiAction[] }
+  | { type: 'markdown'; text: string }
+  | { type: 'badge'; text: string; tone?: 'default' | 'secondary' | 'outline' | 'destructive' }
+  | { type: 'empty'; title: string; description?: string; icon?: string }
+  | { type: 'loading'; label: string }
+
+/** Walk a UI document with shared depth/count limits, including nested forms. */
+export function flattenPluginUiBlocks(blocks: readonly PluginUiBlock[]): PluginUiBlock[] {
+  const result: PluginUiBlock[] = []
+  function visit(items: readonly PluginUiBlock[], depth: number) {
+    if (depth > 6) throw new PluginError('QuotaExceeded', 'Plugin UI nesting exceeds 6 levels')
+    for (const block of items) {
+      result.push(block)
+      if (result.length > 200) throw new PluginError('QuotaExceeded', 'Plugin UI exceeds 200 blocks')
+      if (block.type === 'layout' || block.type === 'section') visit(block.blocks, depth + 1)
+      if (block.type === 'tabs') for (const tab of block.tabs) visit(tab.blocks, depth + 1)
+    }
+  }
+  visit(blocks, 0)
+  const ids = new Set<string>()
+  for (const block of result) {
+    if ('id' in block && block.id !== undefined) {
+      const key = `${block.type}:${block.id}`
+      if (ids.has(key)) throw new PluginError('InvalidPath', 'Duplicate UI block ID')
+      ids.add(key)
+    }
+  }
+  return result
+}
+
+/** Shared validation used by NoteGen and the SDK's in-memory host. */
+export function parsePluginUiExtension(value: unknown, parseChildren: (value: unknown) => readonly PluginUiBlock[]): PluginExtendedUiBlock | undefined {
+  const fail = (): never => { throw new PluginError('InvalidPath', 'Malformed extended plugin UI block') }
+  const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : fail()
+  const text = (value: unknown, max = 500, min = 1): string => typeof value === 'string' && value.length >= min && value.length <= max ? value : fail()
+  const boolean = (value: unknown): boolean | undefined => value === undefined || typeof value === 'boolean' ? value : fail()
+  const choice = <T extends string>(value: unknown, options: readonly T[]): T | undefined => value === undefined ? undefined : options.includes(value as T) ? value as T : fail()
+  const keys = (value: Record<string, unknown>, allowed: string[]) => { if (Object.keys(value).some(key => !allowed.includes(key))) fail() }
+  const array = (value: unknown, max: number): unknown[] => Array.isArray(value) && value.length <= max ? value : fail()
+  const unique = (items: readonly { id: string }[]) => { if (new Set(items.map(item => item.id)).size !== items.length) fail() }
+  const optionalText = (value: unknown, max = 500) => value === undefined ? undefined : text(value, max)
+  const action = (value: unknown): PluginUiAction => {
+    const v = record(value)
+    keys(v, ['id', 'label', 'command', 'argument', 'icon', 'iconOnly', 'confirmation', 'disabled', 'variant'])
+    // Arguments cross the existing JSON-only RPC boundary; reject non-JSON values here too.
+    const json = (value: unknown, depth = 0): boolean => depth <= 12 && (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value) || Array.isArray(value) && value.every(item => json(item, depth + 1)) || typeof value === 'object' && value !== null && Object.values(value).every(item => json(item, depth + 1)))
+    if (v.argument !== undefined && !json(v.argument)) fail()
+    let confirmation: PluginActionConfirmation | undefined
+    if (v.confirmation !== undefined) {
+      const c = record(v.confirmation); keys(c, ['title', 'description', 'confirmLabel', 'cancelLabel'])
+      confirmation = { title: text(c.title, 240), description: optionalText(c.description, 2000), confirmLabel: text(c.confirmLabel, 160), cancelLabel: text(c.cancelLabel, 160) }
+    }
+    if (v.iconOnly === true && !v.icon) fail()
+    return { iconOnly: boolean(v.iconOnly), confirmation, id: text(v.id, 160), label: text(v.label, 160), command: text(v.command, 220), argument: v.argument as PluginCommandArgument | undefined, icon: optionalText(v.icon, 80), disabled: boolean(v.disabled), variant: choice(v.variant, ['default', 'secondary', 'destructive', 'ghost', 'outline']) }
+  }
+  const v = record(value)
+  switch (v.type) {
+    case 'layout':
+      keys(v, ['type', 'id', 'direction', 'gap', 'blocks'])
+      return { type: 'layout', id: text(v.id, 160), direction: choice(v.direction, ['row', 'column']), gap: choice(v.gap, ['small', 'medium', 'large']), blocks: parseChildren(v.blocks) }
+    case 'section':
+      keys(v, ['type', 'id', 'title', 'collapsible', 'defaultOpen', 'blocks'])
+      return { type: 'section', id: text(v.id, 160), title: text(v.title, 240), collapsible: boolean(v.collapsible), defaultOpen: boolean(v.defaultOpen), blocks: parseChildren(v.blocks) }
+    case 'tabs': {
+      keys(v, ['type', 'id', 'label', 'tabs'])
+      const tabs = array(v.tabs, 12).map(value => { const tab = record(value); keys(tab, ['id', 'label', 'blocks']); return { id: text(tab.id, 160), label: text(tab.label, 160), blocks: parseChildren(tab.blocks) } })
+      if (!tabs.length) fail()
+      unique(tabs)
+      return { type: 'tabs', id: text(v.id, 160), label: text(v.label, 160), tabs }
+    }
+    case 'toolbar': {
+      keys(v, ['type', 'id', 'label', 'actions'])
+      const actions = array(v.actions, 20).map(action); unique(actions)
+      return { type: 'toolbar', id: text(v.id, 160), label: text(v.label, 160), actions }
+    }
+    case 'item-list': {
+      keys(v, ['type', 'id', 'generation', 'label', 'emptyText', 'items', 'openCommand', 'toggleCommand', 'reorderCommand', 'reorderLabel', 'actions'])
+      const items = array(v.items, 100).map(value => { const item = record(value); keys(item, ['id', 'label', 'description', 'icon', 'checked', 'disabled']); return { id: text(item.id, 1024), label: text(item.label), description: optionalText(item.description, 2000), icon: optionalText(item.icon, 80), checked: boolean(item.checked), disabled: boolean(item.disabled) } })
+      unique(items)
+      const actions = v.actions === undefined ? undefined : array(v.actions, 20).map(action)
+      if (actions) unique(actions)
+      if (v.reorderCommand !== undefined && v.reorderLabel === undefined) fail()
+      return { type: 'item-list', id: text(v.id, 160), generation: text(v.generation, 160), label: text(v.label, 160), emptyText: text(v.emptyText, 500, 0), items, actions, openCommand: optionalText(v.openCommand, 220), toggleCommand: optionalText(v.toggleCommand, 220), reorderCommand: optionalText(v.reorderCommand, 220), reorderLabel: optionalText(v.reorderLabel, 160) }
+    }
+    case 'markdown': keys(v, ['type', 'text']); return { type: 'markdown', text: text(v.text, 20000, 0) }
+    case 'badge': keys(v, ['type', 'text', 'tone']); return { type: 'badge', text: text(v.text, 160), tone: choice(v.tone, ['default', 'secondary', 'outline', 'destructive']) }
+    case 'empty': keys(v, ['type', 'title', 'description', 'icon']); return { type: 'empty', title: text(v.title, 240), description: optionalText(v.description, 2000), icon: optionalText(v.icon, 80) }
+    case 'loading': keys(v, ['type', 'label']); return { type: 'loading', label: text(v.label, 160) }
+    default: return undefined
+  }
 }

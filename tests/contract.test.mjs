@@ -3,6 +3,9 @@ import { test } from 'node:test'
 
 import {
   PLUGIN_API_VERSION,
+  isValidPluginMenuCondition,
+  matchesPluginMenuCondition,
+  flattenPluginUiBlocks,
   definePluginManifest,
   isPluginError,
   PluginError,
@@ -40,7 +43,7 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.0')
+  assert.equal(PLUGIN_API_VERSION, '0.1.1')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
 })
 
@@ -262,4 +265,31 @@ test('command and storage boundaries preserve top-level undefined and use produc
 test('stable plugin errors survive structural checks', () => {
   const error = new PluginError('PermissionDenied', 'denied')
   assert.equal(isPluginError(error), true)
+})
+
+
+test('menu conditions reject code and fail closed for missing contexts', () => {
+  assert.equal(isValidPluginMenuCondition('editor == markdown && selection && !readOnly'), true)
+  assert.equal(matchesPluginMenuCondition('editor == markdown && selection && !readOnly', { editor: 'markdown', selection: true, readOnly: false }), true)
+  assert.equal(matchesPluginMenuCondition('!readOnly', {}), false)
+  assert.equal(matchesPluginMenuCondition('selection || resourceKind == file && resourceExt == md', { resourceKind: 'file', resourceExt: 'txt' }), false)
+  for (const condition of ['selection &&', 'window.alert(1)', 'editor.constructor', '(selection)', 'unknown == true']) assert.equal(isValidPluginMenuCondition(condition), false)
+})
+
+test('nested UI validates command ownership and unique identities', async () => {
+  const host = createPluginTestHost({ manifest })
+  await host.activate({ activate() {} })
+  const action = { id: 'refresh', label: 'Refresh', icon: 'refresh-cw', command: 'com.example.contract.refresh' }
+  await host.context.ui.views.update('com.example.contract.view', { blocks: [
+    { type: 'section', id: 'section', title: 'Details', blocks: [
+      { type: 'toolbar', id: 'tools', label: 'Actions', actions: [action] },
+      { type: 'item-list', id: 'items', generation: '1', label: 'Items', emptyText: 'Empty', items: [{ id: 'a', label: 'A', checked: false }], toggleCommand: action.command },
+    ] },
+  ] })
+  assert.equal(flattenPluginUiBlocks(host.views['com.example.contract.view'].blocks).length, 3)
+  await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks: [{ type: 'section', id: 'section', title: 'Details', blocks: [{ type: 'toolbar', id: 'tools', label: 'Actions', actions: [{ ...action, command: 'other.plugin.command' }] }] }] }), error => error.code === 'PermissionDenied')
+  await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks: [{ type: 'item-list', id: 'items', generation: '1', label: 'Items', emptyText: '', items: [{ id: 'same', label: 'A' }, { id: 'same', label: 'B' }] }] }), error => error.code === 'InvalidPath')
+  let blocks = [{ type: 'text', text: 'deep' }]
+  for (let i = 0; i < 8; i++) blocks = [{ type: 'layout', id: String(i), blocks }]
+  await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks }))
 })

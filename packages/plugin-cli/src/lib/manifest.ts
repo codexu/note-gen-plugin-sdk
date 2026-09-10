@@ -1,4 +1,4 @@
-import { PLUGIN_API_VERSION, type PluginManifestV1 } from '@notegen/plugin-api'
+import { PLUGIN_API_VERSION, isValidPluginMenuCondition, type PluginManifestV1 } from '@notegen/plugin-api'
 import { compare as compareSemver, valid as validSemver } from 'semver'
 
 import { fail } from './diagnostics.js'
@@ -374,7 +374,7 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
   for (const [index, rawCommand] of commands.entries()) {
     const path = `$.contributes.commands[${index}]`
     const command = objectValue(rawCommand, path)
-    assertAllowedKeys(command, ['id', 'title', 'description', 'icon', 'suggestedShortcut'], path)
+    assertAllowedKeys(command, ['id', 'title', 'description', 'icon', 'suggestedShortcut', 'keywords'], path)
     const id = validateNamespacedId(required(command, 'id', path), pluginId, `${path}.id`)
     if (commandIds.has(id)) fail('manifest.duplicate-command', `Command ${id} is declared more than once`, `${path}.id`)
     commandIds.add(id)
@@ -431,28 +431,30 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
     }
   }
 
+  for (const raw of (contributes.commands ?? []) as unknown[]) {
+    const command = objectValue(raw, '$.contributes.commands')
+    if (command.keywords !== undefined && (!Array.isArray(command.keywords) || command.keywords.length > 20 || command.keywords.some(word => typeof word !== 'string' || word.length < 1 || word.length > 80))) fail('manifest.invalid-keywords', 'Invalid command keywords', '$.contributes.commands')
+  }
+
   const menus = Object.hasOwn(contributes, 'menus')
     ? arrayValue(contributes.menus, '$.contributes.menus')
     : []
   if (menus.length > 100) fail('manifest.too-many-contributions', 'A plugin may declare at most 100 menu items', '$.contributes.menus')
-  const menuLocations = new Set(['editor/slash', 'editor/context', 'file/context', 'mobile/writing/overflow'])
+  const menuLocations = new Set(['editor/slash', 'editor/context', 'editor/selection', 'editor/toolbar', 'tab/context', 'file/context', 'mobile/writing/overflow'])
   for (const [index, rawMenu] of menus.entries()) {
     const path = `$.contributes.menus[${index}]`
     const menu = objectValue(rawMenu, path)
-    assertAllowedKeys(menu, ['location', 'command', 'when', 'group'], path)
+    assertAllowedKeys(menu, ['location', 'command', 'when', 'group', 'order', 'icon', 'enableWhen'], path)
     const location = stringValue(required(menu, 'location', path), `${path}.location`)
     const command = stringValue(required(menu, 'command', path), `${path}.command`)
     if (!menuLocations.has(location) || !commandIds.has(command)) {
       fail('manifest.invalid-menu', `${path} must use a supported location and declared command`, path)
     }
-    if (Object.hasOwn(menu, 'when')) {
-      const condition = stringValue(menu.when, `${path}.when`)
-      const afterEditor = condition.startsWith('editor') ? condition.slice('editor'.length).trimStart() : ''
-      const supported = utf8ByteLength(condition) <= 240
-        && afterEditor.startsWith('==')
-        && afterEditor.slice(2).trimStart() === 'markdown'
-      if (!supported) fail('manifest.invalid-menu-condition', `${path}.when is unsupported`, `${path}.when`)
+    for (const key of ['when', 'enableWhen']) {
+      if (Object.hasOwn(menu, key) && !isValidPluginMenuCondition(stringValue(menu[key], `${path}.${key}`))) fail('manifest.invalid-menu-condition', `${path}.${key} is unsupported`, `${path}.${key}`)
     }
+    if (menu.order !== undefined && (typeof menu.order !== 'number' || !Number.isInteger(menu.order) || Math.abs(menu.order) > 10000)) fail('manifest.invalid-menu-order', 'Invalid menu order', path)
+    if (menu.icon !== undefined && (typeof menu.icon !== 'string' || !ICON_PATTERN.test(menu.icon) || menu.icon.length > 80)) fail('manifest.invalid-menu-icon', 'Invalid menu icon', path)
     if (Object.hasOwn(menu, 'group')) {
       const group = stringValue(menu.group, `${path}.group`)
       if (group.length === 0 || utf8ByteLength(group) > 80 || hasControlCharacter(group)) {

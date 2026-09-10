@@ -1,3 +1,4 @@
+import { parsePluginUiExtension, flattenPluginUiBlocks } from '@notegen/plugin-api'
 import {
   PLUGIN_API_VERSION,
   PluginError,
@@ -1079,7 +1080,8 @@ class MemoryPluginTestHost implements PluginTestHost {
     if (options.open && this.surface === 'editor-window') {
       throw new PluginError('EditorBusy', 'Separate editor windows cannot open another note')
     }
-    this.assertPermission('notes.create', options.path)
+    if (options.create === false && !options.open) throw new PluginError('InvalidPath', 'Open-only mode requires open: true')
+    if (options.create !== false) this.assertPermission('notes.create', options.path)
     if (options.open) this.assertPermission('notes.open', options.path)
     if (options.workspaceId !== this.workspaceInfo.id) {
       throw new PluginError(
@@ -1100,7 +1102,7 @@ class MemoryPluginTestHost implements PluginTestHost {
 
     const path = assertNotePath(options.path)
     const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-    this.assertPermission('notes.create', parent || path)
+    if (options.create !== false) this.assertPermission('notes.create', parent || path)
     if (options.open) this.assertPermission('notes.open', parent || path)
     if (utf8Length(options.initialContent) > MAX_NOTE_BYTES) {
       throw new PluginError(
@@ -1121,6 +1123,7 @@ class MemoryPluginTestHost implements PluginTestHost {
       }
     }
 
+    if (options.create === false) throw new PluginError('NotFound', 'The note does not exist', { path })
     this.noteStore.set(path, {
       id: `${this.workspaceInfo.id}:${path}`,
       path,
@@ -1536,7 +1539,7 @@ class MemoryPluginTestHost implements PluginTestHost {
   simulateFormChange(surfaceId: string, formId: string): NonNullable<PluginUiDocument['expectedForm']> {
     this.assertUsable()
     const document = this.dialogState?.id === surfaceId ? this.dialogState.content : this.viewStates.get(surfaceId)
-    if (!document?.blocks.some(block => block.type === 'form' && block.id === formId)) throw new PluginError('NotFound', 'Form does not exist')
+    if (!document || !flattenPluginUiBlocks(document.blocks).some(block => block.type === 'form' && block.id === formId)) throw new PluginError('NotFound', 'Form does not exist')
     // Seed a newly reopened form without reusing a request precondition.
     this.syncFormSnapshots(surfaceId, { blocks: document.blocks })
     const state = this.formSnapshots.get(JSON.stringify([surfaceId, formId]))!
@@ -1550,7 +1553,7 @@ class MemoryPluginTestHost implements PluginTestHost {
       const state = this.formSnapshots.get(JSON.stringify([surface, expected.formId]))
       if (!state || state.generation !== expected.generation || state.revision !== expected.revision) throw new PluginError('StaleRevision', 'Form input changed; discard this UI result')
     }
-    const forms = document.blocks.filter(block => block.type === 'form')
+    const forms = flattenPluginUiBlocks(document.blocks).filter(block => block.type === 'form')
     for (const [key, state] of this.formSnapshots) {
       if (state.surface === surface && !forms.some(form => form.id === state.formId)) this.formSnapshots.delete(key)
     }
@@ -2227,7 +2230,7 @@ function validateFormField(value: unknown): PluginFormField {
   if (value.disabled !== undefined && typeof value.disabled !== 'boolean') throw new PluginError('InvalidPath', 'Invalid disabled flag')
   const base = { id, label: uiString(value.label, 'Field label', 160, 1), ...(value.description === undefined ? {} : { description: uiString(value.description, 'Field description', 2_000) }), ...(value.required === undefined ? {} : { required: value.required }), ...(value.disabled === undefined ? {} : { disabled: value.disabled }), ...(visibleWhen ? { visibleWhen } : {}) }
   const keys = ['id', 'label', 'description', 'required', 'type', 'value', 'disabled', 'visibleWhen']
-  if (value.type === 'text' || value.type === 'textarea') {
+  if (value.type === 'text' || value.type === 'textarea' || value.type === 'search' || value.type === 'date') {
     if (!hasOnlyKeys(value, new Set([...keys, 'placeholder', 'maxLength'])) || (value.maxLength !== undefined && (typeof value.maxLength !== 'number' || !Number.isInteger(value.maxLength) || value.maxLength < 1 || value.maxLength > 10_000))) throw new PluginError('InvalidPath', 'Invalid text field')
     return { ...base, type: value.type, ...(value.value === undefined ? {} : { value: uiString(value.value, 'Field value', typeof value.maxLength === 'number' ? value.maxLength : 10_000) }), ...(value.placeholder === undefined ? {} : { placeholder: uiString(value.placeholder, 'Placeholder', 500) }), ...(value.maxLength === undefined ? {} : { maxLength: value.maxLength as number }) }
   }
@@ -2246,15 +2249,15 @@ function validateFormField(value: unknown): PluginFormField {
     if ((min !== undefined && max !== undefined && min > max) || (initial !== undefined && ((min !== undefined && initial < min) || (max !== undefined && initial > max)))) throw new PluginError('InvalidPath', 'Invalid numeric bounds')
     return { ...base, type: 'number', ...(initial === undefined ? {} : { value: initial }), ...(min === undefined ? {} : { min }), ...(max === undefined ? {} : { max }) }
   }
-  if (value.type === 'select') {
-    if (!hasOnlyKeys(value, new Set([...keys, 'options'])) || !Array.isArray(value.options) || value.options.length < 1 || value.options.length > 100) throw new PluginError('InvalidPath', 'Invalid select')
+  if (value.type === 'select' || value.type === 'note-picker') {
+    if (!hasOnlyKeys(value, new Set([...keys, 'options'])) || !Array.isArray(value.options) || (value.type === 'select' && value.options.length < 1) || value.options.length > 100) throw new PluginError('InvalidPath', 'Invalid select')
     const options = value.options.map(option => {
       if (!isPlainRecord(option) || !hasOnlyKeys(option, new Set(['label', 'value']))) throw new PluginError('InvalidPath', 'Invalid select option')
-      return { label: uiString(option.label, 'Option label', 160, 1), value: uiString(option.value, 'Option value', 160, 1) }
+      return { label: uiString(option.label, 'Option label', 160, 1), value: uiString(option.value, 'Option value', value.type === 'note-picker' ? 1024 : 160, 1) }
     })
-    const initial = value.value === undefined ? undefined : uiString(value.value, 'Select value', 160)
+    const initial = value.value === undefined ? undefined : uiString(value.value, 'Select value', value.type === 'note-picker' ? 1024 : 160)
     if (new Set(options.map(option => option.value)).size !== options.length || (initial !== undefined && !options.some(option => option.value === initial))) throw new PluginError('InvalidPath', 'Duplicate options or invalid initial value')
-    return { ...base, type: 'select', options, ...(initial === undefined ? {} : { value: initial }) }
+    return { ...base, type: value.type, options, ...(initial === undefined ? {} : { value: initial }) }
   }
   throw new PluginError('InvalidPath', 'Unknown field type')
 }
@@ -2262,8 +2265,9 @@ function validateFormField(value: unknown): PluginFormField {
 function validateUiDocument(
   value: unknown,
   commandIds: ReadonlySet<string>,
+  depth = 0,
 ): PluginUiDocument {
-  if (!isPlainRecord(value)
+  if (depth > 6 || !isPlainRecord(value)
     || !hasOnlyKeys(value, new Set(['blocks', 'expectedForm']))
     || !Array.isArray(value.blocks)
     || value.blocks.length > MAX_UI_BLOCKS) {
@@ -2276,6 +2280,15 @@ function validateUiDocument(
   for (const candidate of value.blocks) {
     if (!isPlainRecord(candidate) || typeof candidate.type !== 'string') {
       throw new PluginError('InvalidPath', 'Plugin UI block is malformed')
+    }
+    const extension = parsePluginUiExtension(candidate, children => validateUiDocument({ blocks: children }, commandIds, depth + 1).blocks)
+    if (extension) {
+      const referenced = extension.type === 'toolbar' ? extension.actions.map(action => action.command)
+        : extension.type === 'item-list' ? [extension.openCommand, extension.toggleCommand, extension.reorderCommand, ...(extension.actions ?? []).map(action => action.command)] : []
+      for (const command of referenced) if (command && !commandIds.has(command)) throw new PluginError('PermissionDenied', 'Undeclared UI command')
+      blocks.push(extension)
+      flattenPluginUiBlocks(blocks)
+      continue
     }
     if (candidate.type === 'form') {
       if (!hasOnlyKeys(candidate, new Set(['type', 'id', 'resetKey', 'fields', 'submitLabel', 'command', 'changeCommand', 'submitDisabled'])) || !Array.isArray(candidate.fields) || candidate.fields.length < 1 || candidate.fields.length > 30) throw new PluginError('InvalidPath', 'Invalid form')
@@ -2291,6 +2304,28 @@ function validateUiDocument(
       if (candidate.submitDisabled !== undefined && typeof candidate.submitDisabled !== 'boolean') throw new PluginError('InvalidPath', 'Invalid submit disabled flag')
       if (new Set(fields.map(field => field.id)).size !== fields.length) throw new PluginError('InvalidPath', 'Duplicate form field ID')
       blocks.push({ type: 'form', id, command, fields, ...(changeCommand ? { changeCommand } : {}), ...(candidate.submitDisabled === undefined ? {} : { submitDisabled: candidate.submitDisabled }), ...(candidate.resetKey === undefined ? {} : { resetKey: uiString(candidate.resetKey, 'Form reset key', 160) }), submitLabel: uiString(candidate.submitLabel, 'Submit label', 160, 1) })
+      continue
+    }
+    if (candidate.type === 'navigation-list') {
+      if (!hasOnlyKeys(candidate, new Set(['type', 'id', 'generation', 'label', 'emptyText', 'addLabel', 'removeLabel', 'reorderLabel', 'items', 'openCommand', 'addCommand', 'removeCommand', 'reorderCommand'])) || !Array.isArray(candidate.items) || candidate.items.length > 100) throw new PluginError('InvalidPath', 'Invalid navigation list')
+      const id = uiString(candidate.id, 'Navigation ID', 160, 1)
+      if (blocks.some(block => block.type === 'navigation-list' && block.id === id)) throw new PluginError('InvalidPath', 'Duplicate navigation list ID')
+      const items = candidate.items.map(item => {
+        if (!isPlainRecord(item) || !hasOnlyKeys(item, new Set(['id', 'label']))) throw new PluginError('InvalidPath', 'Invalid navigation item')
+        return { id: uiString(item.id, 'Item ID', 1024, 1), label: uiString(item.label, 'Item label', 500, 1) }
+      })
+      if (new Set(items.map(item => item.id)).size !== items.length) throw new PluginError('InvalidPath', 'Duplicate navigation item ID')
+      const command = (key: string) => {
+        const value = uiString(candidate[key], 'Command', 220, 1)
+        if (!commandIds.has(value)) throw new PluginError('PermissionDenied', 'Undeclared navigation command')
+        return value
+      }
+      blocks.push({ type: 'navigation-list', id, items,
+        generation: uiString(candidate.generation, 'Generation', 160, 1), label: uiString(candidate.label, 'Label', 160, 1),
+        emptyText: uiString(candidate.emptyText, 'Empty text', 500), addLabel: uiString(candidate.addLabel, 'Add label', 160, 1),
+        removeLabel: uiString(candidate.removeLabel, 'Remove label', 160, 1), reorderLabel: uiString(candidate.reorderLabel, 'Reorder label', 160, 1),
+        openCommand: command('openCommand'), addCommand: command('addCommand'), removeCommand: command('removeCommand'), reorderCommand: command('reorderCommand'),
+      })
       continue
     }
     if (candidate.type === 'separator') {

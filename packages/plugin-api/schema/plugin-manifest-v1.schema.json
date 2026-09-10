@@ -186,6 +186,7 @@
         "title": { "$ref": "#/$defs/localizedText" },
         "description": { "$ref": "#/$defs/localizedText" },
         "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 },
+        "keywords": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 80 } },
         "suggestedShortcut": { "type": "string", "minLength": 1, "maxLength": 80 }
       }
     },
@@ -277,10 +278,13 @@
       "additionalProperties": false,
       "required": ["location", "command"],
       "properties": {
-        "location": { "enum": ["editor/slash", "editor/context", "file/context", "mobile/writing/overflow"] },
+        "location": { "enum": ["editor/slash", "editor/context", "editor/selection", "editor/toolbar", "tab/context", "file/context", "mobile/writing/overflow"] },
         "command": { "$ref": "#/$defs/namespacedId" },
         "when": { "type": "string", "minLength": 1, "maxLength": 240 },
-        "group": { "type": "string", "minLength": 1, "maxLength": 80 }
+        "group": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "enableWhen": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "order": { "type": "integer", "minimum": -10000, "maximum": 10000 },
+        "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 }
       }
     },
     "view": {

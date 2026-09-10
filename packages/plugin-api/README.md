@@ -100,3 +100,91 @@ to the old data branch. Reinstalling an existing fingerprint reuses its branch.
 This does not roll back note writes, attachments, settings or remote effects.
 Use explicit data schema versions and idempotent migration steps. The test host
 does not simulate package installation or versioned storage.
+
+## Active document paths
+
+`editor.getActiveEditor()` and active-editor events may include `path`, the workspace-relative Markdown path. It is protected by `editor.read` and never contains an absolute filesystem path. Older hosts and non-workspace documents may omit it; plugins must handle absence without treating the opaque document ID as a path.
+
+## Opening existing notes only
+
+Updated hosts accept `notes.openOrCreate({ ..., open: true, create: false })`. This requires `notes.open` only and fails for missing files without creating them. Omitted `create` preserves the original behavior and requires `notes.create`. Open-only mode requires an updated host; older hosts do not implement this option.
+
+## Navigation lists (updated local hosts)
+
+The `navigation-list` UI block provides a compact host-rendered sortable list. Each item has a unique stable ID and a label. Item open/remove commands receive `{ generation, itemId }`; the add command receives `{ generation }`. Reorder receives `{ generation, itemIds }` with the complete new order. Plugins must check generation, reject duplicate/missing/foreign IDs, persist the new order, and publish a new document. Hosts validate all referenced commands and limit lists to 100 items. Older hosts reject this block type.
+
+## API 0.1.1: editor menus and composable UI
+
+New contributions require `apiVersion: "^0.1.1"`. The corresponding NoteGen host
+changes must be present; publishing this SDK does not update an installed app.
+The older `^0.1.0` plugin contract remains accepted by the new host.
+
+Menu locations now include `editor/slash`, `editor/context`, `editor/selection`
+(the text-selection floating toolbar), `editor/toolbar` (visual editor footer),
+`tab/context`, `file/context`, and `mobile/writing/overflow`.
+`editor/context` uses Alt/Option + right-click to preserve the native clipboard menu.
+The tab menu also retains file-menu contributions, deduplicated by command ID.
+
+Each menu accepts `icon`, `group`, `order`, `when`, and `enableWhen`. Groups sort
+lexically, then entries sort by ascending order. A menu icon overrides the command
+icon. Commands accept up to 20 `keywords` for slash-menu and palette search.
+Selection/toolbar menus display three direct buttons and put additional commands
+in an accessible overflow menu. Existing built-in editing commands remain intact.
+
+```json
+{
+  "location": "editor/selection",
+  "command": "com.example.notes.extract",
+  "icon": "files",
+  "group": "notes",
+  "order": 10,
+  "when": "editor == markdown && selection",
+  "enableWhen": "!readOnly && !codeBlock"
+}
+```
+
+Conditions support boolean `selection`, `readOnly`, `codeBlock`; string `editor`,
+`resourceKind` (`file`, `folder`, `root`), and `resourceExt` (e.g. `md`). Use `!`,
+`==`, `!=`, `&&`, `||`; `&&` binds more tightly than `||`. Parentheses, arbitrary
+properties and executable JavaScript are rejected. Unknown/missing context fails
+closed, including negated conditions. Conditions control UI only, never permission
+grants. Read selection/text through `editor.read`; keep the captured editor ID and
+revision when applying an edit through `editor.write`. Menu arguments do not leak
+selected text or circumvent permissions.
+
+Composable blocks:
+
+- `layout`: row/column, small/medium/large gap, nested `blocks`.
+- `section`: title, nested blocks, optional collapse and initial open state.
+- `tabs`: stable ID, accessible label, tabs with ID/label/blocks.
+- `toolbar`: labeled actions with optional icon, iconOnly, variant and confirmation.
+- `item-list`: stable IDs, generation, click action, optional checkbox action,
+  drag and keyboard reordering, context actions and a touch-accessible overflow.
+- `markdown`: formatted text with raw HTML, links and image loading disabled.
+- `badge`, `empty`, `loading`: standard theme-aware feedback.
+- Form fields additionally support `search`, ISO `date`, and searchable
+  `note-picker`. Supply note choices as `{label,value}` through existing scoped
+  `notes.list` permissions. The picker does not enumerate files or grant access.
+
+Nested forms retain their values when a surrounding section/tab rerenders. IDs
+must be unique per block type across the whole document. Limits: 6 nesting levels,
+200 total blocks, 50 blocks per container, 100 list items, 20 actions, 12 tabs,
+and the existing 128 KiB document limit. Command ownership is validated recursively.
+
+List open/toggle/action commands receive `{generation,itemId}`; toggle adds
+`checked`. Context actions add `actionId` and optionally nested `argument`.
+Reorder commands receive `{generation,itemIds}` with the complete requested order.
+The plugin must reject stale generations and invalid IDs, persist successful
+changes, then publish updated content. The host never mutates plugin storage.
+
+An action may provide `confirmation: {title,description?,confirmLabel,cancelLabel}`.
+Its command runs only after confirmation. Legacy `navigation-list` remains a
+compatibility adapter; new plugins should compose toolbar and item-list blocks.
+
+Supported symbolic icons include bookmark, calendar-days, file-text, files, folder,
+folder-open, layout-template, list-checks, list-todo, link, search, plus, minus,
+trash-2, pencil, copy, check, x, star, pin, tag, settings, more-horizontal, arrow-up,
+arrow-down, download, upload, external-link, list, table-2, columns-3, clock,
+book-open, code, sparkles, shuffle, refresh-cw, chart-no-axes-combined, file-input,
+and flask-conical. Unknown icons fall back to a puzzle icon. Raw SVG/HTML and
+external icon URLs are not accepted as executable markup.

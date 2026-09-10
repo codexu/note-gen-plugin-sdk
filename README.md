@@ -4,19 +4,19 @@ The NoteGen Plugin SDK is the public TypeScript toolchain for building desktop
 plugins that run inside NoteGen. This repository contains the host contract,
 project scaffold, build and package CLI, and an in-process test host.
 
-> The packages in this workspace have not had their first npm release. Their
-> source is implemented here, but `npm`, `pnpm`, and `npx` package commands will
-> work only after the corresponding packages are published. Community
-> marketplace submissions are also still closed.
+> All four SDK packages are published on npm. SDK releases use GitHub Actions
+> and npm Trusted Publishing; official plugin releases use the separate
+> [plugin marketplace workflow](https://github.com/codexu/note-gen-plugins/blob/main/README.en.md#maintainer-release-procedure).
+> Community marketplace submissions are still closed.
 
 ## Packages
 
 | Package | Purpose | npm status |
 | --- | --- | --- |
-| `@notegen/plugin-api` | Stable TypeScript types and runtime-contract constants | Not yet published |
-| `@notegen/plugin-cli` | Create, validate, build, pack, sign, and verify plugins | Not yet published |
-| `create-notegen-plugin` | Small `npx` entry point for project creation | Not yet published |
-| `@notegen/plugin-test` | In-process host for testing lifecycle and API calls | Not yet published |
+| `@notegen/plugin-api` | Stable TypeScript types and runtime-contract constants | [npm](https://www.npmjs.com/package/@notegen/plugin-api) |
+| `@notegen/plugin-cli` | Create, validate, build, pack, sign, and verify plugins | [npm](https://www.npmjs.com/package/@notegen/plugin-cli) |
+| `create-notegen-plugin` | Small `npx` entry point for project creation | [npm](https://www.npmjs.com/package/create-notegen-plugin) |
+| `@notegen/plugin-test` | In-process host for testing lifecycle and API calls | [npm](https://www.npmjs.com/package/@notegen/plugin-test) |
 
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
@@ -39,15 +39,14 @@ container.
 
 ## Requirements
 
-Before the first public release, all SDK packages and the host API stay at
-`0.1.0`. Ongoing development does not increment versions. Begin version bumps
-only after the maintainer publishes the first release.
+Published package versions are immutable. Changes to a published package need
+a new version; ordinary plugin changes do not require an SDK release.
 
 - Node.js 20 or newer
 - pnpm 10 when working from this repository
 - NoteGen desktop for development import and real-host testing
 
-## Use the source before the npm release
+## Use the SDK source locally
 
 Clone and build the workspace:
 
@@ -67,11 +66,11 @@ node packages/create-notegen-plugin/dist/bin.js ../my-plugin \
   --name "My Plugin"
 ```
 
-Use absolute paths when calling that CLI from another directory. Before the npm
-release, do not pass `--install` to the scaffold: the generated package
-dependencies are not available from the npm registry yet.
+Use absolute paths when calling that CLI from another directory. The generated
+project uses npm dependencies; testing unreleased SDK changes requires explicitly
+linking the local SDK packages.
 
-## Quick start after the npm release
+## Quick start with npm
 
 Create a project:
 
@@ -94,6 +93,13 @@ pnpm validate
 `.notegen/package`. In NoteGen desktop, enable Developer mode and import the
 absolute path to that directory. NoteGen executes the validated snapshot, not
 your source tree.
+
+Development imports are labeled **Development** in NoteGen and do not receive
+marketplace updates. Signing a local package does not change that installation
+source. To test an upgrade, first install an older signed version through the
+marketplace, then publish a newer compatible version and refresh the catalog.
+The Discover card shows the market version, which can differ from the installed
+version. See the [installation and update guide](https://github.com/codexu/note-gen-plugins/blob/main/README.en.md#client-installation-and-update-checks).
 
 ## Release artifact flow
 
@@ -199,12 +205,28 @@ For each release:
 1. Update the package versions that changed and their affected dependency
    ranges, then commit the refreshed `pnpm-lock.yaml`. Never reuse a version
    for different package contents.
-2. Merge the release commit to `main` and wait for CI to pass.
-3. Manually run `Publish npm packages` from `main` and approve the protected
-   environment deployment.
-4. Confirm the public package pages and run the documented `npx` quick-start
-   against npm before removing the pre-release notice from this README and the
-   website.
+2. Commit and push the release changes to `main`, then wait for CI to pass.
+3. In GitHub Actions, select **Publish npm packages → Run workflow → main**.
+   Approve the `npm` environment deployment if reviewer protection is configured.
+   The equivalent GitHub CLI command is:
+
+   ```bash
+   gh workflow run publish.yml --repo codexu/note-gen-plugin-sdk --ref main
+   ```
+
+4. Confirm the workflow succeeded, the intended versions and provenance appear
+   on npm, and the documented `npx` quick-start works against the registry.
+   A run that skips every existing version verifies reproducibility but does not
+   exercise an actual OIDC upload.
+5. If official plugins should use the new SDK, update `PLUGIN_SDK_REF` in the
+   plugin repository to the reviewed full SDK commit SHA. Publish affected
+   plugin versions through that repository's workflow. Publishing npm packages
+   does not publish a marketplace index or update installed plugins.
+
+All four SDK packages are packed and checked on each manual run; only missing
+versions are uploaded. For an interrupted publication, use **Re-run jobs** on
+the original run. If package bytes must change, bump the affected versions and
+start a new release from the new commit rather than overwriting npm versions.
 
 ## Marketplace ownership
 
@@ -225,3 +247,10 @@ update both variables after review. Version equality alone is insufficient.
 The failure laboratory includes opt-in memory exhaustion and local diagnostic
 commands. Real-host release acceptance is documented in NoteGen's
 `PLUGIN-MAINTENANCE.md`; passing the in-process test host does not satisfy it.
+
+### 0.1.1 local-host compatibility
+
+This release adds editor selection/toolbar/tab menu contributions, menu conditions,
+unified symbolic icons, and composable declarative UI. See the API README for the
+contract and limits. It requires the matching updated NoteGen host for new features;
+SDK publication does not publish NoteGen or any official plugin package.

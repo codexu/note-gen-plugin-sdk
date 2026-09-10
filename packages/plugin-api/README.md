@@ -160,6 +160,8 @@ Composable blocks:
 - `toolbar`: labeled actions with optional icon, iconOnly, variant and confirmation.
 - `item-list`: stable IDs, generation, click action, optional checkbox action,
   drag and keyboard reordering, context actions and a touch-accessible overflow.
+  Items may supply `metadata` (up to 1024 characters) for a separate information
+  line below the description, such as a workspace-relative file path.
 - `markdown`: formatted text with raw HTML, links and image loading disabled.
 - `badge`, `empty`, `loading`: standard theme-aware feedback.
 - Form fields additionally support `search`, ISO `date`, and searchable

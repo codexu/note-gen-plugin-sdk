@@ -212,6 +212,8 @@ export interface ResolvedDay {
 }
 
 export interface NoteSnapshot {
+  /** Saved file modification time in Unix milliseconds, when supported by the host/filesystem. */
+  modifiedAt?: number
   id: string
   path: string
   revision: number
@@ -794,7 +796,7 @@ export interface PluginItemListBlock {
   generation: string
   label: string
   emptyText: string
-  items: readonly { id: string; label: string; description?: string; icon?: string; checked?: boolean; disabled?: boolean }[]
+  items: readonly { id: string; label: string; description?: string; metadata?: string; icon?: string; checked?: boolean; disabled?: boolean }[]
   openCommand?: string
   toggleCommand?: string
   reorderCommand?: string
@@ -891,7 +893,7 @@ function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unkn
     }
     case 'item-list': {
       keys(v, ['type', 'id', 'generation', 'label', 'emptyText', 'items', 'openCommand', 'toggleCommand', 'reorderCommand', 'reorderLabel', 'actions'])
-      const items = array(v.items, 100).map(value => { const item = record(value); keys(item, ['id', 'label', 'description', 'icon', 'checked', 'disabled']); return { id: text(item.id, 1024), label: text(item.label), description: optionalText(item.description, 2000), icon: optionalText(item.icon, 80), checked: boolean(item.checked), disabled: boolean(item.disabled) } })
+      const items = array(v.items, 100).map(value => { const item = record(value); keys(item, ['id', 'label', 'description', 'metadata', 'icon', 'checked', 'disabled']); return { id: text(item.id, 1024), label: text(item.label), description: optionalText(item.description, 2000), metadata: optionalText(item.metadata, 1024), icon: optionalText(item.icon, 80), checked: boolean(item.checked), disabled: boolean(item.disabled) } })
       unique(items)
       const actions = v.actions === undefined ? undefined : array(v.actions, 20).map(action)
       if (actions) unique(actions)

@@ -1,7 +1,9 @@
+import { PLUGIN_API_VERSION } from '@notegen/plugin-api'
 import { basename } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { Command, CommanderError, Option } from 'commander'
 import {
+  PLUGIN_CLI_VERSION,
   EXIT_PROJECT_FAILURE,
   EXIT_SUCCESS,
   EXIT_UNSAFE_REFUSAL,
@@ -29,7 +31,7 @@ import {
   validatePluginTarget,
 } from './lib/tasks.js'
 
-export const PLUGIN_CLI_VERSION = '0.1.0' as const
+export { PLUGIN_CLI_VERSION } from './lib/constants.js'
 
 export interface CliIo {
   readonly stdout: Pick<NodeJS.WriteStream, 'write'>
@@ -226,7 +228,7 @@ export function createCliProgram(
       .choices(['command', 'editor-statistics'])
       .default('command'))
     .option('--min-app-version <version>', 'minimum NoteGen version', '0.37.0')
-    .option('--api-version <range>', 'supported plugin API range', '^0.1.0')
+    .option('--api-version <range>', 'supported plugin API range', `^${PLUGIN_API_VERSION}`)
     .addOption(new Option('--package-manager <manager>', 'generated project package manager')
       .choices(['pnpm', 'npm'])
       .default('pnpm'))

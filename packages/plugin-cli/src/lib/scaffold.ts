@@ -1,3 +1,5 @@
+import { PLUGIN_API_VERSION } from '@notegen/plugin-api'
+import { PLUGIN_CLI_VERSION } from './constants.js'
 import { spawn } from 'node:child_process'
 import { lstat, mkdir, readdir, rm, rmdir } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
@@ -65,7 +67,7 @@ function templateFiles(options: CreatePluginProjectOptions): ReadonlyMap<string,
         name: options.name,
         description: options.description ?? 'Show statistics for the active NoteGen editor.',
         version: '0.1.0',
-        apiVersion: options.apiVersion ?? '^0.1.1',
+        apiVersion: options.apiVersion ?? `^${PLUGIN_API_VERSION}`,
         minAppVersion: options.minAppVersion ?? '0.37.0',
         platforms: ['desktop'],
         entry: 'dist/main.js',
@@ -87,7 +89,7 @@ function templateFiles(options: CreatePluginProjectOptions): ReadonlyMap<string,
         name: options.name,
         description: options.description ?? 'A NoteGen command plugin.',
         version: '0.1.0',
-        apiVersion: options.apiVersion ?? '^0.1.1',
+        apiVersion: options.apiVersion ?? `^${PLUGIN_API_VERSION}`,
         minAppVersion: options.minAppVersion ?? '0.37.0',
         platforms: ['desktop'],
         entry: 'dist/main.js',
@@ -121,8 +123,8 @@ function templateFiles(options: CreatePluginProjectOptions): ReadonlyMap<string,
       scripts,
       notegen: { source: 'src/main.ts' },
       devDependencies: {
-        '@notegen/plugin-api': '^0.1.1',
-        '@notegen/plugin-cli': '^0.1.1',
+        '@notegen/plugin-api': `^${PLUGIN_API_VERSION}`,
+        '@notegen/plugin-cli': `^${PLUGIN_CLI_VERSION}`,
         typescript: '^5.8.3',
       },
       packageManager: packageManager === 'pnpm' ? 'pnpm@10.20.0' : undefined,

@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Create, validate, build, package, sign, and verify NoteGen plugins.",
   "license": "MIT",
   "type": "module",

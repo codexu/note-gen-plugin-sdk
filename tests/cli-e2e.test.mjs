@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { PLUGIN_API_VERSION } from '../packages/plugin-api/dist/index.js'
 import { runCli } from '../packages/plugin-cli/dist/index.js'
 
 function capture() {
@@ -42,6 +43,8 @@ test('CLI creates, deterministically packs, signs, verifies, and rejects tamperi
     '--json',
   ])
   assert.equal(created.code, 0, created.stderr)
+  const manifest = JSON.parse(await readFile(join(project, 'plugin.json'), 'utf8'))
+  assert.equal(manifest.apiVersion, `^${PLUGIN_API_VERSION}`)
   const packageJson = JSON.parse(await readFile(join(project, 'package.json'), 'utf8'))
   assert.match(packageJson.scripts.build, /^tsc .*--noEmit && notegen-plugin build$/u)
 
@@ -155,4 +158,12 @@ test('source-project validation parses locales and checks default-locale referen
   const valid = await invoke(['validate', project, '--json'])
   assert.equal(valid.code, 0, valid.stderr)
   assert.equal(JSON.parse(valid.stdout).kind, 'project')
+})
+
+
+test('CLI version follows the installed package metadata', async () => {
+  const metadata = JSON.parse(await readFile(new URL('../packages/plugin-cli/package.json', import.meta.url), 'utf8'))
+  const result = await invoke(['--version'])
+  assert.equal(result.code, 0, result.stderr)
+  assert.equal(result.stdout.trim(), metadata.version)
 })

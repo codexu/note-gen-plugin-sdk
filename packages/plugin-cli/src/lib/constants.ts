@@ -1,3 +1,8 @@
+import { readFileSync } from 'node:fs'
+
+/** Read the installed package metadata so release bumps cannot leave a stale CLI version. */
+export const PLUGIN_CLI_VERSION: string = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version
+
 export const PACKAGE_EXTENSION = '.notegen-plugin'
 export const UNSIGNED_PACKAGE_EXTENSION = '.unsigned.notegen-plugin'
 export const DEVELOPMENT_OUTPUT_DIRECTORY = '.notegen/package'

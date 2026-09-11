@@ -43,7 +43,7 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.1')
+  assert.equal(PLUGIN_API_VERSION, '0.1.2')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
 })
 
@@ -296,4 +296,31 @@ test('nested UI validates command ownership and unique identities', async () => 
   let blocks = [{ type: 'text', text: 'deep' }]
   for (let i = 0; i < 8; i++) blocks = [{ type: 'layout', id: String(i), blocks }]
   await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks }))
+})
+
+
+test('scriptless resources validate payloads and reject unsafe or executable declarations', () => {
+  const { entry: _entry, ...base } = manifest
+  const pack = { ...base, activationEvents: [], permissions: {}, contributes: {}, resources: {
+    themes: [{ id: 'sample', name: 'Sample', light: { primary: [210, 30, 40] }, dark: {} }],
+    languages: [{ locale: 'fr', name: 'French', messages: 'fr.json' }],
+  } }
+  const files = new Map([['fr.json', Buffer.from('{"settings":{"title":"Réglages"}}')]])
+  assert.equal(validatePluginManifest(pack, { files }).entry, undefined)
+  assert.throws(() => validatePluginManifest(pack, { files: new Map() }))
+  assert.throws(() => validatePluginManifest({ ...pack, activationEvents: ['onWorkspace:open'] }))
+  assert.throws(() => validatePluginManifest({ ...pack, resources: { themes: [{ ...pack.resources.themes[0], light: { primary: [0, 101, 20] } }] } }))
+  assert.throws(() => validatePluginManifest({ ...pack, resources: { languages: [{ locale: 'fr', name: 'French', messages: '../fr.json' }] } }))
+  assert.throws(() => validatePluginManifest(pack, { files: new Map([['fr.json', Buffer.from('{"constructor":"bad"}')]]) }))
+})
+
+test('document preview requires permission and permits only declared WASM assets', () => {
+  const { entry: _entry, ...base } = manifest
+  const preview = { id: 'sample', name: 'Sample', extensions: ['ngpreview'], script: 'preview.js', assets: ['decoder.wasm'] }
+  const pack = { ...base, activationEvents: [], contributes: {}, permissions: {}, resources: { documentPreviews: [preview] } }
+  assert.throws(() => validatePluginManifest(pack))
+  const permitted = { ...pack, permissions: { 'attachments.read': { scope: 'workspace-file' } } }
+  const files = new Map([['preview.js', Buffer.from('// bundled renderer')], ['decoder.wasm', Buffer.from([0, 97, 115, 109])]])
+  assert.equal(validatePluginManifest(permitted, { files }).resources.documentPreviews[0].id, 'sample')
+  assert.throws(() => validatePluginManifest(permitted, { files: new Map([...files, ['hidden.wasm', Buffer.from([0])]]) }))
 })

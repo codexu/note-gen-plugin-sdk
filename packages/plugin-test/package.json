@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-test",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "In-process test host for NoteGen plugins.",
   "license": "MIT",
   "type": "module",

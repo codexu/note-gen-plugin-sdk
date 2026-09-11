@@ -1,3 +1,4 @@
+import { validatePluginResources, pluginResourcePaths, validatePluginLanguageMessages } from '@notegen/plugin-api'
 import { PLUGIN_API_VERSION, isValidPluginMenuCondition, type PluginManifestV1 } from '@notegen/plugin-api'
 import { compare as compareSemver, valid as validSemver } from 'semver'
 
@@ -637,7 +638,7 @@ export function validatePluginManifest(
   assertAllowedKeys(manifest, [
     'manifestVersion', 'id', 'name', 'description', 'version', 'apiVersion',
     'minAppVersion', 'platforms', 'entry', 'activationEvents', 'permissions',
-    'contributes', 'defaultLocale', 'locales', 'author', 'repository', 'license',
+    'contributes', 'resources', 'defaultLocale', 'locales', 'author', 'repository', 'license',
   ], '$')
 
   const manifestVersion = integerValue(required(manifest, 'manifestVersion', '$'), '$.manifestVersion')
@@ -664,8 +665,33 @@ export function validatePluginManifest(
     fail('manifest.desktop-required', 'Community plugin packages must include desktop', '$.platforms')
   }
 
-  const entry = validatePackagePath(stringValue(required(manifest, 'entry', '$'), '$.entry'), { label: '$.entry' })
-  validateEntry(entry, options.files)
+  if (manifest.entry !== undefined) {
+    const entry = validatePackagePath(stringValue(manifest.entry, '$.entry'), { label: '$.entry' })
+    validateEntry(entry, options.files)
+  }
+  if (manifest.resources !== undefined) {
+    try {
+      validatePluginResources(manifest.resources)
+      if (manifest.resources.documentPreviews?.length && !objectValue(manifest.permissions, '$.permissions')['attachments.read']) throw new Error('Previews require attachments.read')
+      for (const path of pluginResourcePaths(manifest.resources)) {
+        const bytes = options.files?.get(path)
+        if (options.files && !bytes) throw new Error(`Missing resource: ${path}`)
+        if (bytes && bytes.length > 5 * 1_048_576) throw new Error(`Resource exceeds 5 MiB: ${path}`)
+      }
+      for (const language of manifest.resources.languages ?? []) {
+        const bytes = options.files?.get(language.messages)
+        if (bytes) validatePluginLanguageMessages(parseStrictJson(bytes, language.messages))
+      }
+    } catch (error) { fail('manifest.invalid-resources', String(error), '$.resources') }
+  }
+  for (const path of options.files?.keys() ?? []) {
+    if (path.toLowerCase().endsWith('.wasm') && !(manifest.resources as import('@notegen/plugin-api').PluginResources | undefined)?.documentPreviews?.some(preview => preview.assets?.includes(path))) fail('manifest.undeclared-wasm', 'WASM must be a declared preview asset', path)
+  }
+  if (manifest.entry === undefined) {
+    if (!manifest.resources || Object.values(objectValue(manifest.resources, '$.resources')).every(x => !Array.isArray(x) || x.length === 0)) fail('manifest.missing-resources', 'A resource package needs resources')
+    if (arrayValue(manifest.activationEvents, '$.activationEvents').length || Object.values(objectValue(manifest.contributes, '$.contributes')).some(items => Array.isArray(items) && items.length)) fail('manifest.resource-execution', 'A resource package cannot declare runtime contributions or activation events')
+    if (Object.keys(objectValue(manifest.permissions, '$.permissions')).some(x => x !== 'attachments.read') || (!(objectValue(manifest.resources, '$.resources').documentPreviews as unknown[] | undefined)?.length && Object.keys(objectValue(manifest.permissions, '$.permissions')).length)) fail('manifest.resource-permissions', 'Only previews may request attachments.read')
+  }
   validatePermissionDeclarations(required(manifest, 'permissions', '$'))
   const contributions = validateContributions(required(manifest, 'contributes', '$'), pluginId)
   validateActivationEvents(required(manifest, 'activationEvents', '$'), contributions.commandIds)

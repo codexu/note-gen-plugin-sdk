@@ -1,0 +1,1 @@
+Rendered inside the plugin sandbox.

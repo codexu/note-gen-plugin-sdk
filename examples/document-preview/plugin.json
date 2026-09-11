@@ -1,0 +1,33 @@
+{
+  "manifestVersion": 1,
+  "id": "org.example.document-preview",
+  "name": "Document preview sample",
+  "version": "1.0.0",
+  "apiVersion": ">=0.1.2",
+  "minAppVersion": "0.0.0",
+  "platforms": [
+    "desktop"
+  ],
+  "activationEvents": [],
+  "permissions": {
+    "attachments.read": {
+      "scope": "workspace-file"
+    }
+  },
+  "contributes": {},
+  "resources": {
+    "documentPreviews": [
+      {
+        "id": "text-layout",
+        "name": "Layout preview sample",
+        "extensions": [
+          "ngpreview"
+        ],
+        "script": "preview.js",
+        "assets": [
+          "caption.txt"
+        ]
+      }
+    ]
+  }
+}

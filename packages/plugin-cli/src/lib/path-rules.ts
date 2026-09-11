@@ -14,7 +14,7 @@ const RESERVED_SEGMENTS = new Set([
 ])
 
 const FORBIDDEN_FILE_SUFFIXES = Object.freeze([
-  '.exe', '.dll', '.dylib', '.so', '.node', '.wasm', '.msi', '.dmg', '.pkg',
+  '.exe', '.dll', '.dylib', '.so', '.node', '.msi', '.dmg', '.pkg',
   '.deb', '.rpm', '.apk', '.ipa', '.app', '.jar', '.class', '.bat', '.cmd',
   '.ps1', '.sh', '.map', '.pem', '.p12', '.pfx',
 ] as const)

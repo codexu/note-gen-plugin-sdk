@@ -21,7 +21,7 @@ project scaffold, build and package CLI, and an in-process test host.
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
 
-The current `@notegen/plugin-api` protocol is 0.1.1. It includes revision-safe
+The current `@notegen/plugin-api` protocol is 0.1.2. It includes revision-safe
 editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.
@@ -262,3 +262,7 @@ SDK publication does not publish NoteGen or any official plugin package.
 The host protocol remains 0.1.1. This release publishes the updated
 `NoteSnapshot.modifiedAt` and item-list metadata contract and refreshes the
 SDK package dependency versions. Use the matching NoteGen host for these fields.
+
+## SDK 0.1.4 resource extensions
+
+Protocol 0.1.2 adds scriptless theme/language packs, file icon rules and isolated document previews. See [the contract and examples](RESOURCE-EXTENSIONS.md) for lifecycle behavior, limits and host acceptance work.

@@ -1,0 +1,59 @@
+{
+  "manifestVersion": 1,
+  "id": "org.example.resource-pack",
+  "name": "Resource pack sample",
+  "version": "1.0.0",
+  "apiVersion": ">=0.1.2",
+  "minAppVersion": "0.0.0",
+  "platforms": [
+    "desktop"
+  ],
+  "activationEvents": [],
+  "permissions": {},
+  "contributes": {},
+  "resources": {
+    "themes": [
+      {
+        "id": "slate",
+        "name": "Slate sample",
+        "light": {
+          "primary": [
+            210,
+            35,
+            40
+          ]
+        },
+        "dark": {
+          "primary": [
+            210,
+            35,
+            75
+          ]
+        }
+      }
+    ],
+    "languages": [
+      {
+        "locale": "fr",
+        "name": "Français (exemple)",
+        "messages": "fr.json"
+      }
+    ],
+    "fileIcons": [
+      {
+        "kind": "file",
+        "extension": "md",
+        "icon": {
+          "emoji": "📝"
+        }
+      },
+      {
+        "kind": "folder",
+        "path": "Projects",
+        "icon": {
+          "name": "folder"
+        }
+      }
+    ]
+  }
+}

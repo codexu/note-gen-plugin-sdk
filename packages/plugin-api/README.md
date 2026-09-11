@@ -190,3 +190,7 @@ arrow-down, download, upload, external-link, list, table-2, columns-3, clock,
 book-open, code, sparkles, shuffle, refresh-cw, chart-no-axes-combined, file-input,
 and flask-conical. Unknown icons fall back to a puzzle icon. Raw SVG/HTML and
 external icon URLs are not accepted as executable markup.
+
+## Protocol 0.1.2 resource extensions
+
+`PluginManifestV1.resources` declares themes, languages, file icons and document previews. `entry` is optional for resource-only packages. `PluginContext.fileIcons.setRules/clear` manages runtime rules. See [RESOURCE-EXTENSIONS.md](https://github.com/codexu/note-gen-plugin-sdk/blob/main/RESOURCE-EXTENSIONS.md) for the full contract and examples in SDK 0.1.4.

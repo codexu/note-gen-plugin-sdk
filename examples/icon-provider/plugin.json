@@ -1,0 +1,18 @@
+{
+  "manifestVersion": 1,
+  "id": "org.example.icon-provider",
+  "name": "Runtime icon provider sample",
+  "version": "1.0.0",
+  "apiVersion": ">=0.1.2",
+  "minAppVersion": "0.0.0",
+  "platforms": [
+    "desktop"
+  ],
+  "entry": "dist/main.js",
+  "activationEvents": [
+    "onWorkspace:open",
+    "onEditor:markdown"
+  ],
+  "permissions": {},
+  "contributes": {}
+}

@@ -1,3 +1,4 @@
+import { validatePluginResources } from '@notegen/plugin-api'
 import { parsePluginUiExtension, flattenPluginUiBlocks } from '@notegen/plugin-api'
 import {
   PLUGIN_API_VERSION,
@@ -108,6 +109,8 @@ export type PluginTestCallName =
   | 'workspace.onDidChange'
   | 'calendar.resolveDay'
   | 'notes.read'
+  | 'fileIcons.setRules'
+  | 'fileIcons.clear'
   | 'attachments.read'
   | 'attachments.create'
   | 'notes.openOrCreate'
@@ -774,6 +777,10 @@ class MemoryPluginTestHost implements PluginTestHost {
           this.assertUsable()
           return this.resolveDay(options)
         },
+      }),
+      fileIcons: Object.freeze({
+        setRules: async rules => { this.assertUsable(); validatePluginResources({ fileIcons: rules }); this.record('fileIcons.setRules', [rules]) },
+        clear: async () => { this.assertUsable(); this.record('fileIcons.clear') },
       }),
       attachments: Object.freeze({
         read: async ({ path }) => {

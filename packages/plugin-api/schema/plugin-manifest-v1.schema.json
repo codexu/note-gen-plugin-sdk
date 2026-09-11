@@ -13,11 +13,11 @@
     "apiVersion",
     "minAppVersion",
     "platforms",
-    "entry",
     "activationEvents",
     "permissions",
     "contributes"
   ],
+  "anyOf": [{ "required": ["entry"] }, { "required": ["resources"] }],
   "properties": {
     "manifestVersion": { "const": 1 },
     "id": {
@@ -57,6 +57,7 @@
     },
     "permissions": { "$ref": "#/$defs/permissions" },
     "contributes": { "$ref": "#/$defs/contributions" },
+    "resources": { "$ref": "#/$defs/resources" },
     "defaultLocale": { "$ref": "#/$defs/localeTag" },
     "locales": {
       "type": "object",
@@ -77,6 +78,150 @@
     "license": { "type": "string", "minLength": 1, "maxLength": 80 }
   },
   "$defs": {
+    "resourceHsl": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number", "minimum": 0, "maximum": 360},
+        {"type": "number", "minimum": 0, "maximum": 100},
+        {"type": "number", "minimum": 0, "maximum": 100}
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "resourcePalette": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "background": {"$ref": "#/$defs/resourceHsl"},
+        "foreground": {"$ref": "#/$defs/resourceHsl"},
+        "card": {"$ref": "#/$defs/resourceHsl"},
+        "cardForeground": {"$ref": "#/$defs/resourceHsl"},
+        "primary": {"$ref": "#/$defs/resourceHsl"},
+        "primaryForeground": {"$ref": "#/$defs/resourceHsl"},
+        "secondary": {"$ref": "#/$defs/resourceHsl"},
+        "secondaryForeground": {"$ref": "#/$defs/resourceHsl"},
+        "third": {"$ref": "#/$defs/resourceHsl"},
+        "thirdForeground": {"$ref": "#/$defs/resourceHsl"},
+        "muted": {"$ref": "#/$defs/resourceHsl"},
+        "mutedForeground": {"$ref": "#/$defs/resourceHsl"},
+        "accent": {"$ref": "#/$defs/resourceHsl"},
+        "accentForeground": {"$ref": "#/$defs/resourceHsl"},
+        "border": {"$ref": "#/$defs/resourceHsl"},
+        "shadow": {"$ref": "#/$defs/resourceHsl"}
+      },
+      "required": []
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "themes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "maxLength": 160},
+              "name": {"type": "string", "minLength": 1, "maxLength": 160},
+              "light": {"$ref": "#/$defs/resourcePalette"},
+              "dark": {"$ref": "#/$defs/resourcePalette"}
+            },
+            "required": ["id", "name", "light", "dark"]
+          },
+          "maxItems": 30
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "locale": {"type": "string", "pattern": "^[a-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"},
+              "name": {"type": "string", "minLength": 1, "maxLength": 160},
+              "messages": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[\\\\:])[^\\u0000-\\u001f\\u007f]+$"
+              }
+            },
+            "required": ["locale", "name", "messages"]
+          },
+          "maxItems": 30
+        },
+        "fileIcons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"enum": ["file", "folder"]},
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[\\\\:])[^\\u0000-\\u001f\\u007f]+$"
+              },
+              "extension": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+              "icon": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {"name": {"type": "string", "pattern": "^[a-z0-9-]+$", "maxLength": 80}},
+                    "required": ["name"]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {"emoji": {"type": "string", "minLength": 1, "maxLength": 16}},
+                    "required": ["emoji"]
+                  }
+                ]
+              }
+            },
+            "required": ["kind", "icon"]
+          },
+          "maxItems": 500
+        },
+        "documentPreviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "maxLength": 160},
+              "name": {"type": "string", "minLength": 1, "maxLength": 160},
+              "extensions": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+                "maxItems": 30,
+                "minItems": 1
+              },
+              "script": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[\\\\:])[^\\u0000-\\u001f\\u007f]+$"
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[\\\\:])[^\\u0000-\\u001f\\u007f]+$"
+                },
+                "maxItems": 100
+              }
+            },
+            "required": ["id", "name", "extensions", "script"]
+          },
+          "maxItems": 30
+        }
+      },
+      "required": []
+    },
     "pluginName": {
       "type": "string",
       "minLength": 1,

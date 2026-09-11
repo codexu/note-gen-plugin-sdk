@@ -1,3 +1,4 @@
+import { pluginResourcePaths } from '@notegen/plugin-api'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { build as esbuild } from 'esbuild'
@@ -181,14 +182,14 @@ export async function buildPluginProject(
   const sourcePath = resolve(projectDirectory, ...configuration.source.split('/'))
   assertInside(projectDirectory, sourcePath, 'Plugin source')
   await assertNoSymlinkComponents(projectDirectory, sourcePath, 'Plugin source')
-  await assertRegularFile(sourcePath, 'Plugin source entry')
+  if (manifest.entry) await assertRegularFile(sourcePath, 'Plugin source entry')
 
-  const entry = validatePackagePath(manifest.entry, { label: '$.entry' })
-  const bundle = await bundleEntry(sourcePath, entry)
-  const files = new Map<string, Buffer>([
-    ['plugin.json', manifestBytes],
-    [entry, bundle],
-  ])
+  const files = new Map<string, Buffer>([['plugin.json', manifestBytes]])
+  if (manifest.entry) {
+    const entry = validatePackagePath(manifest.entry, { label: '$.entry' })
+    files.set(entry, await bundleEntry(sourcePath, entry))
+  }
+  for (const path of pluginResourcePaths(manifest.resources)) files.set(path, await readProjectPayloadFile(projectDirectory, path))
   for (const localePath of Object.values(manifest.locales ?? {})) {
     if (!files.has(localePath)) {
       files.set(localePath, await readProjectPayloadFile(projectDirectory, localePath))
@@ -234,13 +235,13 @@ export async function validatePluginProjectSource(
   const sourcePath = resolve(projectDirectory, ...configuration.source.split('/'))
   assertInside(projectDirectory, sourcePath, 'Plugin source')
   await assertNoSymlinkComponents(projectDirectory, sourcePath, 'Plugin source')
-  await assertRegularFile(sourcePath, 'Plugin source entry')
+  if (manifest.entry) await assertRegularFile(sourcePath, 'Plugin source entry')
   // Source preflight cannot require the configured built entry yet. Supply a
   // harmless placeholder for that one package file so the authoritative
   // manifest validator can still parse locale payloads and verify that the
   // default locale covers every contribution reference.
   const sourceValidationFiles = new Map<string, Buffer>([
-    [manifest.entry, Buffer.from('// source-project preflight placeholder\n', 'utf8')],
+    ...(manifest.entry ? [[manifest.entry, Buffer.from('// source-project preflight placeholder\n', 'utf8')] as [string, Buffer]] : []),
   ])
   for (const localePath of Object.values(manifest.locales ?? {})) {
     sourceValidationFiles.set(
@@ -248,6 +249,7 @@ export async function validatePluginProjectSource(
       await readProjectPayloadFile(projectDirectory, localePath),
     )
   }
+  for (const path of pluginResourcePaths(manifest.resources)) sourceValidationFiles.set(path, await readProjectPayloadFile(projectDirectory, path))
   await collectUsageFiles(projectDirectory, sourceValidationFiles)
   const validatedManifest = parsePluginManifest(manifestBytes, {
     files: sourceValidationFiles,

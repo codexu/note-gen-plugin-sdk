@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.1' as const
+export const PLUGIN_API_VERSION = '0.1.2' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -163,7 +163,9 @@ export interface PluginManifestV1 {
   apiVersion: string
   minAppVersion: string
   platforms: readonly PluginPlatform[]
-  entry: string
+  /** Omit for a declarative resource package. */
+  entry?: string
+  resources?: PluginResources
   activationEvents: readonly PluginActivationEvent[]
   permissions: Readonly<PluginPermissionDeclarations>
   contributes: PluginContributions
@@ -594,6 +596,11 @@ export interface PluginContext {
   readonly calendar: {
     readonly resolveDay: (options: ResolveDayOptions) => Promise<ResolvedDay>
   }
+  readonly fileIcons: {
+    /** Replace this plugin's rules atomically. Rules are cleared when its runtime stops. */
+    readonly setRules: (rules: readonly PluginFileIconRule[]) => Promise<void>
+    readonly clear: () => Promise<void>
+  }
   readonly attachments: {
     readonly read: (options: { path: string }) => Promise<PluginAttachment>
     /** Creates a new file only. Existing files are never overwritten. */
@@ -907,3 +914,132 @@ function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unkn
     default: return undefined
   }
 }
+
+/** Declarative extensions. All paths are verified package-relative paths. */
+export const PLUGIN_THEME_TOKENS = ['background', 'foreground', 'card', 'cardForeground', 'primary', 'primaryForeground', 'secondary', 'secondaryForeground', 'third', 'thirdForeground', 'muted', 'mutedForeground', 'accent', 'accentForeground', 'border', 'shadow'] as const
+export type PluginThemeToken = typeof PLUGIN_THEME_TOKENS[number]
+export type PluginThemePalette = Partial<Record<PluginThemeToken, [number, number, number]>>
+export interface PluginThemeResource { id: string; name: string; light: PluginThemePalette; dark: PluginThemePalette }
+export interface PluginLanguageResource { locale: string; name: string; messages: string }
+export interface PluginFileIconRule {
+  /** First matching rule wins; providers are ordered by plugin id. */
+  kind: 'file' | 'folder'
+  path?: string
+  extension?: string
+  icon: { name: string } | { emoji: string }
+}
+export interface PluginDocumentPreviewResource {
+  id: string
+  name: string
+  extensions: string[]
+  /** Self-contained classic JavaScript bundle; runs in a sandboxed iframe. */
+  script: string
+  /** Extra package files available through preview.readAsset(). */
+  assets?: string[]
+}
+export interface PluginResources {
+  themes?: PluginThemeResource[]
+  languages?: PluginLanguageResource[]
+  fileIcons?: PluginFileIconRule[]
+  documentPreviews?: PluginDocumentPreviewResource[]
+}
+/** The preview receives a MessagePort via notegen:preview-init, protocol 1.
+ * Requests: { id, method: 'readDocument', offset, length } or
+ * { id, method: 'readAsset', path }. Responses: { id, result } / { id, error }.
+ * Binary results are Uint8Array; reads are limited to 1 MiB per request.
+ * No arbitrary paths, network access or parent-window access are granted.
+ */
+export interface PluginPreviewInit { type: 'notegen:preview-init'; protocol: 1; name: string; sizeLimit: number }
+
+function object(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected resource object')
+  return value as Record<string, unknown>
+}
+function keys(value: Record<string, unknown>, allowed: string[]) {
+  if (Object.keys(value).some(key => !allowed.includes(key))) throw new Error('Unknown resource field')
+}
+function text(value: unknown, max = 160): asserts value is string {
+  if (typeof value !== 'string' || !value.trim() || [...value].reduce((size, char) => { const point = char.codePointAt(0)!; return size + (point < 128 ? 1 : point < 2048 ? 2 : point < 65536 ? 3 : 4) }, 0) > max || /\p{Cc}/u.test(value)) throw new Error('Invalid resource text')
+}
+export function validatePluginResourcePath(value: unknown): asserts value is string {
+  text(value, 240)
+  const parts = value.split('/')
+  const forbidden = ['.exe', '.dll', '.dylib', '.so', '.node', '.msi', '.dmg', '.pkg', '.deb', '.rpm', '.apk', '.ipa', '.app', '.jar', '.class', '.bat', '.cmd', '.ps1', '.sh', '.map', '.pem', '.p12', '.pfx']
+  if (value.includes('\\') || parts.length > 12 || forbidden.some(suffix => value.toLowerCase().endsWith(suffix)) || parts.some(part => {
+    const lower = part.toLowerCase()
+    const stem = part.split('.')[0].toUpperCase()
+    return !part || part === '.' || part === '..' || part !== part.normalize('NFC') || /[<>:"|?*]/.test(part) || /[. ]$/.test(part)
+      || ['.notegen', 'node_modules', '.git', '.hg', '.svn', '.cache', '.env'].includes(lower) || lower.startsWith('.env.')
+      || ['CON', 'PRN', 'AUX', 'NUL', 'CLOCK$', 'CONIN$', 'CONOUT$'].includes(stem) || /^(COM|LPT)[1-9¹²³]$/.test(stem)
+  })) throw new Error('Invalid resource path')
+}
+export function pluginResourcePaths(resources?: PluginResources): string[] {
+  return [...new Set([...(resources?.languages ?? []).map(x => x.messages), ...(resources?.documentPreviews ?? []).flatMap(x => [x.script, ...(x.assets ?? [])])])]
+}
+export function validatePluginResources(value: unknown): asserts value is PluginResources {
+  const r = object(value)
+  keys(r, ['themes', 'languages', 'fileIcons', 'documentPreviews'])
+  for (const [kind, raw] of Object.entries(r)) {
+    if (!Array.isArray(raw) || raw.length > (kind === 'fileIcons' ? 500 : 30)) throw new Error('Resource limit exceeded')
+    const ids = new Set<string>()
+    for (const item of raw) {
+      const v = object(item)
+      if (kind !== 'fileIcons') {
+        text(v.name)
+        const id = kind === 'languages' ? v.locale : v.id
+        text(id)
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) || ids.has(id)) throw new Error('Invalid or duplicate resource id')
+        ids.add(id)
+      }
+      if (kind === 'themes') {
+        keys(v, ['id', 'name', 'light', 'dark'])
+        for (const mode of ['light', 'dark']) {
+          const palette = object(v[mode])
+          keys(palette, [...PLUGIN_THEME_TOKENS])
+          for (const hsl of Object.values(palette)) {
+            if (!Array.isArray(hsl) || hsl.length !== 3 || hsl.some((n, i) => typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > (i === 0 ? 360 : 100))) throw new Error('Invalid HSL color')
+          }
+        }
+      } else if (kind === 'languages') {
+        keys(v, ['locale', 'name', 'messages'])
+        if (!/^[a-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(v.locale as string)) throw new Error('Invalid locale')
+        validatePluginResourcePath(v.messages)
+        if (!v.messages.endsWith('.json')) throw new Error('Language messages must be JSON')
+      } else if (kind === 'fileIcons') {
+        keys(v, ['kind', 'path', 'extension', 'icon'])
+        if (!['file', 'folder'].includes(v.kind as string)) throw new Error('Invalid icon kind')
+        if (v.path !== undefined) validatePluginResourcePath(v.path)
+        if (v.extension !== undefined && (v.kind !== 'file' || typeof v.extension !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$(?![\s\S])/.test(v.extension))) throw new Error('Invalid icon extension')
+        const icon = object(v.icon)
+        if (Object.keys(icon).length !== 1) throw new Error('Specify one icon')
+        keys(icon, ['name', 'emoji'])
+        if (icon.name !== undefined) { text(icon.name, 80); if (!/^[a-z0-9-]+$/.test(icon.name)) throw new Error('Invalid icon name') }
+        else { text(icon.emoji, 64); if (icon.emoji.length > 16 || !/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(icon.emoji)) throw new Error('Invalid emoji') }
+      } else {
+        keys(v, ['id', 'name', 'extensions', 'script', 'assets'])
+        if (!Array.isArray(v.extensions) || !v.extensions.length || v.extensions.length > 30 || v.extensions.some(x => typeof x !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$(?![\s\S])/.test(x))) throw new Error('Invalid preview extensions')
+        validatePluginResourcePath(v.script)
+        if (!v.script.endsWith('.js')) throw new Error('Preview script must be JavaScript')
+        if (v.assets !== undefined) {
+          if (!Array.isArray(v.assets) || v.assets.length > 100) throw new Error('Too many preview assets')
+          v.assets.forEach(validatePluginResourcePath)
+        }
+      }
+    }
+  }
+}
+/** Structural check; the host additionally validates ICU syntax against its built-in messages. */
+export function validatePluginLanguageMessages(value: unknown, depth = 0): void {
+  if (depth > 20) throw new Error('Language messages are too deeply nested')
+  const messages = object(value)
+  for (const [key, child] of Object.entries(messages)) {
+    if (!key || key.includes('.') || ['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error('Invalid message key')
+    if (typeof child === 'string') { if (child.length > 16384) throw new Error('Message is too long') }
+    else validatePluginLanguageMessages(child, depth + 1)
+  }
+}
+
+export type PluginPreviewRequest =
+  | { id: number; method: 'readDocument'; offset: number; length: number }
+  | { id: number; method: 'readAsset'; path: string }
+export type PluginPreviewResponse = { id: number; result: Uint8Array } | { id: number; error: string }

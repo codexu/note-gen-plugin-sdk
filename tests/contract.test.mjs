@@ -43,7 +43,7 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.3')
+  assert.equal(PLUGIN_API_VERSION, '0.1.4')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
 })
 
@@ -323,4 +323,21 @@ test('document preview requires permission and permits only declared WASM assets
   const files = new Map([['preview.js', Buffer.from('// bundled renderer')], ['decoder.wasm', Buffer.from([0, 97, 115, 109])]])
   assert.equal(validatePluginManifest(permitted, { files }).resources.documentPreviews[0].id, 'sample')
   assert.throws(() => validatePluginManifest(permitted, { files: new Map([...files, ['hidden.wasm', Buffer.from([0])]]) }))
+})
+
+test('settings views share visibility and reject pre-settings protocol hosts', async () => {
+  const views = ['first', 'second'].map(name => ({ id: `com.example.contract.${name}`, title: name, location: 'settings' }))
+  const settingsManifest = { ...manifest, apiVersion: '^0.1.4', contributes: { ...manifest.contributes, views } }
+  assert.equal(validatePluginManifest(settingsManifest).contributes.views[0].location, 'settings')
+  assert.throws(() => validatePluginManifest(settingsManifest, { apiVersion: '0.1.3' }))
+  const host = createPluginTestHost({ manifest: settingsManifest })
+  await host.activate({ activate() {} })
+  const events = []
+  host.context.ui.views.onDidChange(state => { events.push(state) })
+  await host.context.ui.views.open(views[0].id)
+  assert.equal((await host.context.ui.views.getState(views[1].id)).visible, true)
+  await host.context.ui.views.close(views[1].id)
+  assert.equal((await host.context.ui.views.getState(views[0].id)).visible, false)
+  assert.deepEqual(events.map(event => event.visible), [true, true, false, false])
+  await host.deactivate()
 })

@@ -47,6 +47,10 @@ On iframe load, it receives `PluginPreviewInit` (`type: "notegen:preview-init"`,
 
 Replies are `{id, result: Uint8Array}` or `{id, error: string}`. Document reads are bound to the currently displayed file; requests cannot supply another path. `attachments.read` must be granted for that file. Reads recheck workspace, package fingerprint and authoritative permission before and after I/O. The native reader checks containment and refuses files over 256 MiB. Each request reads at most 1 MiB; an empty response indicates EOF. A preview may have two requests in flight, at most 4096 requests and a 512 MiB aggregate read budget. Assets must be declared by that particular preview and match the installed package hash.
 
+The optional init `locale` field carries the NoteGen interface language. Use it for preview translations; unsupported locales or older hosts that omit the field should fall back to English. Do not select the interface language from `navigator.language`.
+
+If init includes `capabilities: {statusBar: true}`, the renderer may send `{type: 'notegen:preview-status', text: '681 rows × 5 columns'}` on its private port. This notification has no reply and counts toward the 4096-message budget. Text is plain text, limited to 240 UTF-16 code units; empty text clears it. The host renders it in NoteGen's existing editor status slot only while that preview is active. It is owned by the file/provider instance and disappears on close, failure, workspace change or provider removal. Older hosts omit the capability; renderers should retain an in-preview fallback instead of accessing parent DOM.
+
 Closing the preview, changing the workspace or removing the provider disposes the port and iframe. Late replies are discarded. Report errors inside the preview; uncaught exceptions and rejected promises also appear in the host with its ordinary unsupported-file fallback. An iframe is an isolation boundary, not a CPU/memory quota: a badly behaved renderer can still consume resources in the webview. This needs desktop runtime validation before shipping broadly.
 
 ## Reviewable examples

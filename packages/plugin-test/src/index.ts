@@ -1334,11 +1334,24 @@ class MemoryPluginTestHost implements PluginTestHost {
     if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Views require the main window')
     const view = this.manifest.contributes.views?.find((entry) => entry.id === id)
     if (!view) throw new PluginError('PermissionDenied', 'View is not declared')
-    return { id, location: view.location, visible: view.location.startsWith('title-bar-') ? !this.hiddenTitleBarViews.has(id) : this.visibleViews.get(view.location) === id }
+    return { id, location: view.location, visible: view.location === 'settings' ? this.visibleViews.has('settings') : view.location.startsWith('title-bar-') ? !this.hiddenTitleBarViews.has(id) : this.visibleViews.get(view.location) === id }
   }
 
   private async changeViewVisibility(id: string, visible: boolean): Promise<void> {
     const state = this.getViewState(id)
+    if (state.location === 'settings') {
+      if (visible) this.visibleViews.set('settings', id)
+      else this.visibleViews.delete('settings')
+      for (const view of this.manifest.contributes.views ?? []) {
+        if (view.location !== 'settings') continue
+        if (!visible) this.syncFormSnapshots(view.id, { blocks: [] })
+        if (state.visible !== visible) {
+          const next = this.getViewState(view.id)
+          await Promise.allSettled([...this.viewListeners].map(listener => Promise.resolve().then(() => listener(next))))
+        }
+      }
+      return
+    }
     if (!visible) this.syncFormSnapshots(id, { blocks: [] })
     if (state.location.startsWith('title-bar-')) {
       if (visible) this.hiddenTitleBarViews.delete(id)

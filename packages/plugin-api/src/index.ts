@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.3' as const
+export const PLUGIN_API_VERSION = '0.1.4' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -123,7 +123,7 @@ export type PluginTitleBarLocation = 'title-bar-left' | 'title-bar-center' | 'ti
 export interface PluginViewContribution {
   id: string
   title: string
-  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | PluginTitleBarLocation
+  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | 'settings' | PluginTitleBarLocation
   icon?: string
 }
 
@@ -954,7 +954,20 @@ export interface PluginResources {
  * Binary results are Uint8Array; reads are limited to 1 MiB per request.
  * No arbitrary paths, network access or parent-window access are granted.
  */
-export interface PluginPreviewInit { type: 'notegen:preview-init'; protocol: 1; name: string; sizeLimit: number }
+export interface PluginPreviewInit {
+  type: 'notegen:preview-init'
+  protocol: 1
+  /** NoteGen interface locale; older hosts may omit it. */
+  locale?: string
+  name: string
+  sizeLimit: number
+  capabilities?: { statusBar?: boolean }
+}
+/** Optional notification over the preview's private MessagePort. No reply.
+ * Requires init.capabilities.statusBar; at most 240 UTF-16 code units.
+ * Empty text clears the item. Only the active editor shows the item.
+ */
+export interface PluginPreviewStatus { type: 'notegen:preview-status'; text: string }
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected resource object')

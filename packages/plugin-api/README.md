@@ -215,3 +215,7 @@ documents render nothing. The host bounds width and allows horizontal scrolling;
 plugins cannot insert raw HTML, CSS, or React components into the title bar.
 Use `apiVersion: ">=0.1.3"`. See the
 [example](https://github.com/codexu/note-gen-plugin-sdk/tree/main/examples/title-bar).
+
+### Settings views (protocol 0.1.4)
+
+Declare `contributes.views[].location: "settings"` to render a declarative view in Settings → Extensions → your plugin. Use the existing `ui.views.update/open/focus/close` API. Opening navigates to that plugin's settings page, focusing targets the view, and closing closes the settings dialog only when that plugin page is selected. All settings views for that plugin render together. Visibility events follow settings navigation, closing and plugin enablement. Settings views are not exposed as sidebar tabs or display-visibility toggles. Only enabled plugins activate their settings views. Packages using this location must require `^0.1.4` or higher. SDK 0.1.6 provides this protocol; the installed NoteGen host must also implement it.

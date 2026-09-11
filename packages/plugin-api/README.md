@@ -194,3 +194,24 @@ external icon URLs are not accepted as executable markup.
 ## Protocol 0.1.2 resource extensions
 
 `PluginManifestV1.resources` declares themes, languages, file icons and document previews. `entry` is optional for resource-only packages. `PluginContext.fileIcons.setRules/clear` manages runtime rules. See [RESOURCE-EXTENSIONS.md](https://github.com/codexu/note-gen-plugin-sdk/blob/main/RESOURCE-EXTENSIONS.md) for the full contract and examples in SDK 0.1.4.
+
+## Protocol 0.1.3 title bar components
+
+Declare a `contributes.views` entry with location `title-bar-left`,
+`title-bar-center`, or `title-bar-right`; use the existing `ui.views` methods.
+The left slot follows built-in recording controls, the center slot is centered
+in the remaining draggable space, and the right slot precedes built-in controls.
+Items are ordered by plugin ID and then by their order in the manifest.
+
+Title bar views activate when mounted and are initially visible. `close` hides a
+view, `open` restores it, and `focus` focuses its container. Updating content does
+not reopen a closed view. Users can hide each slot for a plugin in display settings.
+Disabling/uninstalling a plugin or changing workspace clears its UI state.
+
+`toolbar`, `actions`, `text`, `badge`, `loading`, `separator`, and `progress`
+blocks render inline in one row. A document containing other blocks gets a named
+button (or its declared icon) that opens the full document in a popover. Empty
+documents render nothing. The host bounds width and allows horizontal scrolling;
+plugins cannot insert raw HTML, CSS, or React components into the title bar.
+Use `apiVersion: ">=0.1.3"`. See the
+[example](https://github.com/codexu/note-gen-plugin-sdk/tree/main/examples/title-bar).

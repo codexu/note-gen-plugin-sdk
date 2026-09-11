@@ -364,6 +364,7 @@ class MemoryPluginTestHost implements PluginTestHost {
   }>()
   private readonly calls: PluginTestCall[] = []
   private readonly viewStates = new Map<string, PluginUiDocument>()
+  private readonly hiddenTitleBarViews = new Set<string>()
   private readonly visibleViews = new Map<PluginViewState['location'], string>()
   private readonly viewListeners = new Set<(state: PluginViewState) => void | Promise<void>>()
   private dialogState: (PluginDialogOptions & { id: string }) | null = null
@@ -1333,12 +1334,21 @@ class MemoryPluginTestHost implements PluginTestHost {
     if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Views require the main window')
     const view = this.manifest.contributes.views?.find((entry) => entry.id === id)
     if (!view) throw new PluginError('PermissionDenied', 'View is not declared')
-    return { id, location: view.location, visible: this.visibleViews.get(view.location) === id }
+    return { id, location: view.location, visible: view.location.startsWith('title-bar-') ? !this.hiddenTitleBarViews.has(id) : this.visibleViews.get(view.location) === id }
   }
 
   private async changeViewVisibility(id: string, visible: boolean): Promise<void> {
     const state = this.getViewState(id)
     if (!visible) this.syncFormSnapshots(id, { blocks: [] })
+    if (state.location.startsWith('title-bar-')) {
+      if (visible) this.hiddenTitleBarViews.delete(id)
+      else this.hiddenTitleBarViews.add(id)
+      if (state.visible !== visible) {
+        const next = this.getViewState(id)
+        await Promise.allSettled([...this.viewListeners].map(listener => Promise.resolve().then(() => listener(next))))
+      }
+      return
+    }
     const previous = this.visibleViews.get(state.location)
     if (visible) this.visibleViews.set(state.location, id)
     else if (previous === id) this.visibleViews.delete(state.location)
@@ -1818,6 +1828,7 @@ class MemoryPluginTestHost implements PluginTestHost {
     this.viewListeners.clear()
     this.dialogCloseListeners.clear()
     this.visibleViews.clear()
+    this.hiddenTitleBarViews.clear()
     this.viewStates.clear()
     this.dialogState = null
     for (const pending of this.pendingStatusUpdates.values()) {

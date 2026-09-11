@@ -1,6 +1,6 @@
 {
   "name": "create-notegen-plugin",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Create a NoteGen plugin project.",
   "license": "MIT",
   "type": "module",

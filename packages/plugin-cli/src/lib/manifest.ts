@@ -478,8 +478,8 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
     viewIds.add(id)
     localizedTexts.push(validateLocalizedText(required(view, 'title', path), `${path}.title`))
     const location = stringValue(required(view, 'location', path), `${path}.location`)
-    if (location !== 'left-sidebar' && location !== 'right-sidebar' && location !== 'editor-tab') {
-      fail('manifest.invalid-view', `${path}.location must be left-sidebar, right-sidebar or editor-tab`, `${path}.location`)
+    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'title-bar-left', 'title-bar-center', 'title-bar-right'].includes(location)) {
+      fail('manifest.invalid-view', `${path}.location must be a supported sidebar, editor-tab or title-bar location`, `${path}.location`)
     }
     if (Object.hasOwn(view, 'icon')) {
       const icon = stringValue(view.icon, `${path}.icon`)

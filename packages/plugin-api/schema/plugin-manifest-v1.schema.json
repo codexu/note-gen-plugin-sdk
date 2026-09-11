@@ -439,7 +439,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/namespacedId" },
         "title": { "$ref": "#/$defs/localizedText" },
-        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab"] },
+        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab", "title-bar-left", "title-bar-center", "title-bar-right"] },
         "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 }
       }
     },

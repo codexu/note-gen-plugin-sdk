@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.2' as const
+export const PLUGIN_API_VERSION = '0.1.3' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -115,10 +115,15 @@ export interface PluginStatusBarContribution {
   command?: string
 }
 
+/** Desktop title bar slots. Left appends after built-ins; right precedes built-ins.
+ * Views use ui.views.update/open/close/focus. Compact blocks render inline;
+ * larger documents open in a popover. Ordering follows plugin ID then manifest order. */
+export type PluginTitleBarLocation = 'title-bar-left' | 'title-bar-center' | 'title-bar-right'
+
 export interface PluginViewContribution {
   id: string
   title: string
-  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab'
+  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | PluginTitleBarLocation
   icon?: string
 }
 

@@ -1,0 +1,41 @@
+{
+  "manifestVersion": 1,
+  "id": "org.example.title-bar",
+  "name": "Title bar components",
+  "version": "1.0.0",
+  "apiVersion": ">=0.1.3",
+  "minAppVersion": "0.0.0",
+  "platforms": [
+    "desktop"
+  ],
+  "entry": "dist/main.js",
+  "activationEvents": [
+    "onWorkspace:open"
+  ],
+  "permissions": {},
+  "contributes": {
+    "commands": [
+      {
+        "id": "org.example.title-bar.hello",
+        "title": "Show greeting"
+      }
+    ],
+    "views": [
+      {
+        "id": "org.example.title-bar.left",
+        "title": "Quick action",
+        "location": "title-bar-left"
+      },
+      {
+        "id": "org.example.title-bar.center",
+        "title": "Workspace status",
+        "location": "title-bar-center"
+      },
+      {
+        "id": "org.example.title-bar.right",
+        "title": "Plugin action",
+        "location": "title-bar-right"
+      }
+    ]
+  }
+}

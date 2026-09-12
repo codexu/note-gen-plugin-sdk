@@ -259,6 +259,29 @@ export function createCliProgram(
       : `Run ${created.packageManager} install before building.`)
   })
 
+  const doctorCommand = addJsonOption(addCompatibilityOptions(program.command('doctor [path]')
+    .description('diagnose manifest, resources and explicit host-version compatibility without building')))
+  doctorCommand.action(async (path: string | undefined) => {
+    const options = doctorCommand.opts<CommonOptions>()
+    const result = await validatePluginTarget({
+      ...(path === undefined ? {} : { target: path }),
+      ...(options.apiVersion === undefined ? {} : { apiVersion: options.apiVersion }),
+      ...(options.appVersion === undefined ? {} : { appVersion: options.appVersion }),
+    })
+    const warnings: string[] = []
+    if (!options.appVersion) warnings.push('Host app version not supplied; use --app-version to check the minimum NoteGen version.')
+    if (!options.apiVersion) warnings.push('Checking against this SDK protocol, not a connected NoteGen host; pass --api-version for your installed host.')
+    if (Object.keys(result.manifest.permissions).length) warnings.push('Permission declarations are valid. Actual user grants must be reviewed in NoteGen.')
+    if (result.manifest.contributes.views?.some(view => ['new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(view.location))) warnings.push('Embedded views must echo getState().contextId as expectedContextId; registerView handles this automatically.')
+    const report = { ok: true, command: 'doctor', pluginId: result.manifest.id, sdkVersion: PLUGIN_CLI_VERSION, apiVersion: options.apiVersion ?? PLUGIN_API_VERSION, appCompatibilityChecked: options.appVersion !== undefined, warnings }
+    if (options.json) printJson(io, report)
+    else {
+      writeLine(io.stdout, `Valid plugin: ${report.pluginId}`)
+      writeLine(io.stdout, `SDK ${report.sdkVersion}; protocol ${report.apiVersion}`)
+      for (const warning of warnings) writeLine(io.stdout, warning)
+    }
+  })
+
   const validateCommand = addJsonOption(addCompatibilityOptions(program.command('validate [path]')
     .description('validate a source project, development directory, or plugin archive')
     .option('--public-key <file>', 'publisher public-key JSON or raw Base64 file')

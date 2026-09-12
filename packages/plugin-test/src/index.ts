@@ -1,3 +1,4 @@
+import { createMemoryRecords } from './records.js'
 import { validatePluginResources } from '@notegen/plugin-api'
 import { parsePluginUiExtension, flattenPluginUiBlocks } from '@notegen/plugin-api'
 import {
@@ -12,6 +13,11 @@ import type {
   SetEditorSelectionOptions,
   SearchNotesOptions,
   PluginViewState,
+  PluginRecord,
+  PluginAiRequest,
+  PluginAiStreamEvent,
+  PluginPromptOptions,
+  PluginPromptResult,
   DeleteNoteOptions,
   EditorActiveChangeEvent,
   EditorContentChangeEvent,
@@ -53,6 +59,8 @@ import type {
   WriteNoteOptions,
   WriteNoteResult,
 } from '@notegen/plugin-api'
+
+const EMBEDDED_LOCATIONS = new Set(['new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'])
 
 const STORAGE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\s\S])/
 const DAY_START_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$(?![\s\S])/
@@ -100,6 +108,7 @@ type StorageAreaName = 'device' | 'workspace'
 type LifecycleState = 'idle' | 'activating' | 'active' | 'stopped'
 
 export type PluginTestCallName =
+  | 'chat.setDraft'
   | 'log.info'
   | 'log.warning'
   | 'log.error'
@@ -116,6 +125,7 @@ export type PluginTestCallName =
   | 'notes.openOrCreate'
   | 'notes.list'
   | 'notes.search'
+  | 'notes.prepareForWrite'
   | 'notes.write'
   | 'notes.move'
   | 'notes.delete'
@@ -191,6 +201,8 @@ export interface PluginTestHostOptions {
   /** Existing empty folders that cannot be inferred from seeded notes. */
   readonly folders?: readonly string[]
   readonly notes?: readonly PluginTestNote[]
+  readonly records?: readonly PluginRecord[]
+  readonly recordTags?: readonly { id: number; name: string }[]
   /** Notes open in any tab, pane, or separate editor window. */
   readonly openNotePaths?: readonly string[]
   readonly surface?: 'main' | 'editor-window'
@@ -199,6 +211,8 @@ export interface PluginTestHostOptions {
   readonly editor?: PluginTestEditorState
   readonly messages?: Readonly<Record<string, string>>
   readonly now?: () => Date
+  readonly prompt?: (options: PluginPromptOptions) => Promise<PluginPromptResult>
+  readonly aiGenerate?: (request: PluginAiRequest, signal: PluginAbortSignal, update: (text: string) => void) => Promise<string>
   readonly networkFetch?: (request: PluginNetworkRequest) => PluginNetworkResponse | Promise<PluginNetworkResponse>
 }
 
@@ -226,6 +240,7 @@ export interface PluginTestHost {
   readonly permissions: Readonly<Partial<Record<PluginPermissionName, PluginTestPermissionGrant>>>
   readonly views: Readonly<Record<string, PluginUiDocument>>
   readonly dialog: (PluginDialogOptions & { id: string }) | null
+  setEmbeddedViewContext(id: string, contextId: string | null): Promise<void>
   simulateFormChange(surfaceId: string, formId: string): NonNullable<PluginUiDocument['expectedForm']>
 
   activate(module: PluginModule): Promise<void>
@@ -363,6 +378,14 @@ class MemoryPluginTestHost implements PluginTestHost {
     timer: ReturnType<typeof setTimeout> | null
   }>()
   private readonly calls: PluginTestCall[] = []
+  private readonly recordApi: PluginContext['records']
+  private chatDraft = ''
+  private promptPending = false
+  private readonly promptHandler?: PluginTestHostOptions['prompt']
+  private readonly aiRequests = new Map<string, TestAbortSignal>()
+  private readonly aiListeners = new Set<(event: PluginAiStreamEvent) => void | Promise<void>>()
+  private readonly aiGenerate?: PluginTestHostOptions['aiGenerate']
+  private readonly embeddedContexts = new Map<string, string>()
   private readonly viewStates = new Map<string, PluginUiDocument>()
   private readonly hiddenTitleBarViews = new Set<string>()
   private readonly visibleViews = new Map<PluginViewState['location'], string>()
@@ -456,6 +479,14 @@ class MemoryPluginTestHost implements PluginTestHost {
       options.editor?.text ?? '',
     )
 
+    this.promptHandler = options.prompt
+    this.aiGenerate = options.aiGenerate
+    this.recordApi = createMemoryRecords({
+      ...(options.records ? { records: options.records } : {}),
+      ...(options.recordTags ? { tags: options.recordTags } : {}),
+      guard: permission => { this.assertUsable(); this.assertPermission(permission); if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Records require the main window') },
+      now: () => (options.now?.() ?? new Date()).getTime(),
+    })
     this.context = this.createContext()
   }
 
@@ -744,6 +775,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         id: this.manifest.id,
         version: this.manifest.version,
         apiVersion: PLUGIN_API_VERSION,
+        capabilities: this.surface === 'main' ? ['embedded-views', 'records', 'chat-draft', 'ai-generation', 'ui-prompts'] as const : [],
       }),
       log: Object.freeze({
         info: (message: string) => this.record('log.info', [String(message).slice(0, 1000)]),
@@ -751,6 +783,42 @@ class MemoryPluginTestHost implements PluginTestHost {
         error: (message: string) => this.record('log.error', [String(message).slice(0, 1000)]),
       }),
       signal: this.abortSignal,
+      records: this.recordApi,
+      ai: {
+        generate: async request => {
+          this.assertUsable(); this.assertPermission('ai.generate')
+          if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'AI requires the main window')
+          if (!/^[A-Za-z0-9._-]{1,64}$/.test(request.requestId) || typeof request.prompt !== 'string' || !request.prompt || request.prompt.length > 20_000 || (request.system !== undefined && (typeof request.system !== 'string' || request.system.length > 10_000)) || (request.maxOutputTokens !== undefined && (!Number.isInteger(request.maxOutputTokens) || request.maxOutputTokens < 1 || request.maxOutputTokens > 4096))) throw new PluginError('InvalidPath', 'Invalid AI request')
+          if (this.aiRequests.size) throw new PluginError('QuotaExceeded', 'Only one AI request per plugin may run at once')
+          if (!this.aiGenerate) throw new PluginError('NotFound', 'Provide aiGenerate in the test host options')
+          const signal = new TestAbortSignal()
+          this.aiRequests.set(request.requestId, signal)
+          try {
+            const text = await this.aiGenerate(request, signal, text => {
+              this.assertUsable(); this.assertPermission('ai.generate'); signal.throwIfAborted()
+              if (text.length > 128 * 1024) throw new PluginError('QuotaExceeded', 'AI response exceeds its limit')
+              for (const listener of this.aiListeners) void Promise.resolve().then(() => listener({ requestId: request.requestId, text })).catch(() => undefined)
+            })
+            this.assertUsable(); this.assertPermission('ai.generate'); signal.throwIfAborted()
+            if (text.length > 128 * 1024) throw new PluginError('QuotaExceeded', 'AI response exceeds its limit')
+            return { text }
+          } finally { this.aiRequests.delete(request.requestId) }
+        },
+        cancel: async id => { this.assertUsable(); this.assertPermission('ai.generate'); this.aiRequests.get(id)?.abort(new PluginError('Cancelled', 'AI request cancelled')) },
+        onDidStream: listener => { this.assertUsable(); this.assertPermission('ai.generate'); return addDisposableListener(this.aiListeners, listener) },
+      },
+      chat: {
+        setDraft: async options => {
+          this.assertUsable(); this.assertPermission('chat.write')
+          if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Chat requires the main window')
+          if (typeof options.text !== 'string' || options.text.length > 20_000 || (options.mode !== undefined && !['append', 'replace'].includes(options.mode)) || (options.overwrite !== undefined && typeof options.overwrite !== 'boolean')) throw new PluginError('InvalidPath', 'Invalid chat draft')
+          if (options.mode === 'replace' && this.chatDraft && !options.overwrite) throw new PluginError('Conflict', 'Chat draft is not empty')
+          const next = options.mode === 'replace' ? options.text : this.chatDraft + options.text
+          if (next.length > 20_000) throw new PluginError('QuotaExceeded', 'Chat draft exceeds its limit')
+          this.chatDraft = next
+          this.record('chat.setDraft', [options])
+        },
+      },
       commands: Object.freeze({
         executeHost: async command => {
           this.record('commands.executeHost', [command])
@@ -813,6 +881,20 @@ class MemoryPluginTestHost implements PluginTestHost {
         openOrCreate: async (options) => this.openOrCreateNote(options),
         list: async (options) => this.listNotes(options),
         search: async (options) => this.searchNotes(options),
+        prepareForWrite: async (options) => {
+          this.record('notes.prepareForWrite', [options])
+          this.assertUsable()
+          const path = assertNotePath(options.path)
+          for (const permission of ['notes.read', 'notes.write', 'notes.open'] as const) this.assertPermission(permission, path)
+          if (this.surface === 'editor-window') throw new PluginError('EditorBusy', 'Use the main window')
+          const note = await this.readNote({ path })
+          if (this.editor?.path?.toLowerCase() === path.toLowerCase()) {
+            if (this.editor.composing) throw new PluginError('EditorBusy', 'Finish composing before switching views')
+            this.editor = null; this.editorSelection = null; this.editorSnapshot = null
+          }
+          for (const open of this.openNotePaths) if (open.toLowerCase() === path.toLowerCase()) this.openNotePaths.delete(open)
+          return note
+        },
         write: async (options) => this.writeNote(options),
         move: async (options) => this.moveNote(options),
         delete: async (options) => this.deleteNote(options),
@@ -860,6 +942,28 @@ class MemoryPluginTestHost implements PluginTestHost {
         workspace: this.createStorageArea('workspace'),
       }),
       ui: Object.freeze({
+        prompt: async options => {
+          this.assertUsable()
+          if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Prompts require the main window')
+          if (this.promptPending || this.dialogState) throw new PluginError('Conflict', 'A plugin dialog is already open')
+          if (!options || !['confirm', 'select'].includes(options.type) || typeof options.title !== 'string' || !options.title || options.title.length > 240 || (options.description !== undefined && (typeof options.description !== 'string' || options.description.length > 2000)) || (options.confirmLabel !== undefined && (typeof options.confirmLabel !== 'string' || !options.confirmLabel || options.confirmLabel.length > 80))) throw new PluginError('InvalidPath', 'Invalid prompt options')
+          if (options.type === 'select' && (!Array.isArray(options.options) || !options.options.length || options.options.length > 100 || new Set(options.options.map(item => item.value)).size !== options.options.length || options.options.some(item => typeof item.value !== 'string' || !item.value || item.value.length > 160 || typeof item.label !== 'string' || !item.label || item.label.length > 240))) throw new PluginError('InvalidPath', 'Invalid prompt choices')
+          this.promptPending = true
+          try {
+            const result = await (this.promptHandler?.(options) ?? Promise.resolve(null))
+            this.assertUsable()
+            if (result !== null) {
+              if (options.type === 'confirm') {
+                if (typeof result !== 'boolean') throw new PluginError('InvalidPath', 'Invalid confirmation result')
+              } else {
+                const choices = options.options
+                if (!Array.isArray(result) || (!options.multiple && result.length !== 1) || new Set(result).size !== result.length || result.some(value => !choices.some(item => item.value === value))) throw new PluginError('InvalidPath', 'Invalid selection result')
+              }
+            }
+            return result
+          }
+          finally { this.promptPending = false }
+        },
         showNotice: async (message) => {
           this.record('ui.showNotice', [message])
           this.assertUsable()
@@ -927,7 +1031,10 @@ class MemoryPluginTestHost implements PluginTestHost {
           update: async (id, content) => {
             this.record('ui.views.update', [id, content])
             this.assertUsable()
-            this.getViewState(id)
+            const state = this.getViewState(id)
+            if (EMBEDDED_LOCATIONS.has(state.location) && (!state.visible || !state.contextId || content.expectedContextId !== state.contextId)) {
+              throw new PluginError('StaleRevision', 'Embedded view context changed')
+            }
             if (!(this.manifest.contributes.views ?? []).some((view) => view.id === id)) {
               throw new PluginError('PermissionDenied', `View "${id}" is not declared by the plugin`)
             }
@@ -958,6 +1065,7 @@ class MemoryPluginTestHost implements PluginTestHost {
           this.assertUsable()
           if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Dialogs require the main window')
           const parsed = this.validateDialog(options)
+          if (this.promptPending) throw new PluginError('Conflict', 'A prompt is already open')
           if (parsed.content.expectedForm) throw new PluginError('StaleRevision', 'A new dialog has no form snapshot')
           if (this.dialogState && parsed.replaceId !== this.dialogState.id) throw new PluginError('Conflict', 'A dialog is already open')
           if (!this.dialogState && parsed.replaceId !== undefined) throw new PluginError('NotFound', 'The dialog to replace is no longer open')
@@ -1329,11 +1437,27 @@ class MemoryPluginTestHost implements PluginTestHost {
     for (const listener of this.dialogCloseListeners) void Promise.resolve().then(() => listener({ id, reason })).catch(() => undefined)
   }
 
+  /** Simulate mounting, switching or unmounting an embedded host surface. */
+  async setEmbeddedViewContext(id: string, contextId: string | null): Promise<void> {
+    const previous = this.getViewState(id)
+    if (!EMBEDDED_LOCATIONS.has(previous.location)) throw new PluginError('InvalidPath', 'Not an embedded view')
+    if (contextId !== null && (!contextId || contextId.length > 160)) throw new PluginError('InvalidPath', 'Invalid context ID')
+    if (contextId === null) this.embeddedContexts.delete(id)
+    else this.embeddedContexts.set(id, contextId)
+    this.viewStates.delete(id)
+    this.syncFormSnapshots(id, { blocks: [] })
+    const state = this.getViewState(id)
+    if (JSON.stringify(previous) !== JSON.stringify(state)) {
+      await Promise.allSettled([...this.viewListeners].map(listener => Promise.resolve().then(() => listener(state))))
+    }
+  }
+
   private getViewState(id: string): PluginViewState {
     this.assertUsable()
     if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Views require the main window')
     const view = this.manifest.contributes.views?.find((entry) => entry.id === id)
     if (!view) throw new PluginError('PermissionDenied', 'View is not declared')
+    if (EMBEDDED_LOCATIONS.has(view.location)) return { id, location: view.location, visible: this.embeddedContexts.has(id) && !this.hiddenTitleBarViews.has(id), ...(this.embeddedContexts.has(id) ? { contextId: this.embeddedContexts.get(id)! } : {}) }
     return { id, location: view.location, visible: view.location === 'settings' ? this.visibleViews.has('settings') : view.location.startsWith('title-bar-') ? !this.hiddenTitleBarViews.has(id) : this.visibleViews.get(view.location) === id }
   }
 
@@ -1353,11 +1477,11 @@ class MemoryPluginTestHost implements PluginTestHost {
       return
     }
     if (!visible) this.syncFormSnapshots(id, { blocks: [] })
-    if (state.location.startsWith('title-bar-')) {
+    if (state.location.startsWith('title-bar-') || EMBEDDED_LOCATIONS.has(state.location)) {
       if (visible) this.hiddenTitleBarViews.delete(id)
       else this.hiddenTitleBarViews.add(id)
-      if (state.visible !== visible) {
-        const next = this.getViewState(id)
+      const next = this.getViewState(id)
+      if (state.visible !== next.visible) {
         await Promise.allSettled([...this.viewListeners].map(listener => Promise.resolve().then(() => listener(next))))
       }
       return
@@ -1827,6 +1951,9 @@ class MemoryPluginTestHost implements PluginTestHost {
   private stop(reason: PluginError): void {
     this.lifecycle = 'stopped'
     this.abortSignal.abort(reason)
+    for (const signal of this.aiRequests.values()) signal.abort(reason)
+    this.aiRequests.clear()
+    this.aiListeners.clear()
     this.clearRegistrations()
   }
 
@@ -1843,6 +1970,7 @@ class MemoryPluginTestHost implements PluginTestHost {
     this.visibleViews.clear()
     this.hiddenTitleBarViews.clear()
     this.viewStates.clear()
+    this.embeddedContexts.clear()
     this.dialogState = null
     for (const pending of this.pendingStatusUpdates.values()) {
       if (pending.timer !== null) clearTimeout(pending.timer)
@@ -2299,7 +2427,7 @@ function validateUiDocument(
   depth = 0,
 ): PluginUiDocument {
   if (depth > 6 || !isPlainRecord(value)
-    || !hasOnlyKeys(value, new Set(['blocks', 'expectedForm']))
+    || !hasOnlyKeys(value, new Set(['blocks', 'expectedForm', 'expectedContextId']))
     || !Array.isArray(value.blocks)
     || value.blocks.length > MAX_UI_BLOCKS) {
     throw new PluginError('InvalidPath', 'Plugin UI content is malformed')
@@ -2315,6 +2443,7 @@ function validateUiDocument(
     const extension = parsePluginUiExtension(candidate, children => validateUiDocument({ blocks: children }, commandIds, depth + 1).blocks)
     if (extension) {
       const referenced = extension.type === 'toolbar' ? extension.actions.map(action => action.command)
+        : extension.type === 'kanban' ? [extension.openCardCommand, extension.addCardCommand, extension.editColumnCommand, extension.moveCardCommand, extension.reorderColumnsCommand, ...(extension.openNoteCommand ? [extension.openNoteCommand] : [])]
         : extension.type === 'item-list' ? [extension.openCommand, extension.toggleCommand, extension.reorderCommand, ...(extension.actions ?? []).map(action => action.command)] : []
       for (const command of referenced) if (command && !commandIds.has(command)) throw new PluginError('PermissionDenied', 'Undeclared UI command')
       blocks.push(extension)
@@ -2521,6 +2650,7 @@ function validateUiDocument(
   }
 
   const document: PluginUiDocument = { blocks }
+  if (value.expectedContextId !== undefined) document.expectedContextId = uiString(value.expectedContextId, 'Context ID', 160, 1)
   if (value.expectedForm !== undefined) {
     const expected = value.expectedForm
     if (!isPlainRecord(expected) || !hasOnlyKeys(expected, new Set(['formId', 'generation', 'revision'])) || typeof expected.revision !== 'number' || !Number.isSafeInteger(expected.revision) || expected.revision < 0) throw new PluginError('InvalidPath', 'Invalid form snapshot')

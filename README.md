@@ -21,7 +21,7 @@ project scaffold, build and package CLI, and an in-process test host.
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
 
-The current `@notegen/plugin-api` protocol is 0.1.3. It includes revision-safe
+This checkout targets `@notegen/plugin-api` protocol 0.1.6. It includes revision-safe
 editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.
@@ -272,3 +272,16 @@ Protocol 0.1.2 adds scriptless theme/language packs, file icon rules and isolate
 Protocol 0.1.3 adds `title-bar-left`, `title-bar-center`, and `title-bar-right`
 view locations. See [the title bar example](examples/title-bar/README.md).
 The matching NoteGen host is required; this does not publish a host release.
+
+
+## SDK 0.1.8 embedded views
+
+Protocol 0.1.5 adds new-tab, document top/bottom, file panel, editor toolbar, chat input, record list and status-bar panel locations. Embedded updates require the current `contextId` as `expectedContextId`. See [embedded views](https://github.com/codexu/note-gen-plugin-sdk/blob/main/EMBEDDED-VIEWS.md) for placement, lifecycle, permissions and a complete example.
+
+## Kanban and source handoff
+
+Protocol 0.1.6 adds a host-rendered Kanban block and explicit source-to-plugin document handoff. See [contract and integration notes](KANBAN.md). These changes require a matching protocol 0.1.6 host.
+
+## Workflow APIs in development
+
+SDK 0.1.8 / protocol 0.1.6 adds record workflows, chat drafts, AI generation, prompts and lifecycle helpers. See [usage and permissions](./WORKFLOW-APIS.md) and [maintainer integration notes](./HOST-WORKFLOW-INTEGRATION.md).

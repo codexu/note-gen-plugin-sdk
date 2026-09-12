@@ -148,3 +148,12 @@ storage values are validated as finite, plain containers with enumerable data
 properties (including rejection of sparse arrays), but use this package for
 plugin behavior tests, not for executing untrusted plugins or proving runtime
 security.
+
+
+### Embedded view contexts
+
+Use `await host.setEmbeddedViewContext(viewId, "page-a")` to simulate mounting an embedded view, pass a new token to simulate navigation, or pass `null` to unmount. `ui.views.update` requires the current token in `expectedContextId`; stale or absent contexts reject with `StaleRevision`.
+
+## Kanban and source handoff
+
+Protocol 0.1.6 adds a host-rendered Kanban block and explicit source-to-plugin document handoff. See [contract and integration notes](../../KANBAN.md). These changes are source-only and require a matching host.

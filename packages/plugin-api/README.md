@@ -27,8 +27,8 @@ export const activate: PluginActivate = async (context) => {
 ```
 
 The package contains manifest, permission, contribution, lifecycle, host-context,
-and stable error types. It has no runtime dependencies and does not require DOM
-types.
+and stable error types. The frontmatter helpers depend on `yaml`; bundle value imports into the plugin entry.
+The public types do not require DOM types.
 
 Values that cross the runtime boundary use `PluginJsonValue`. Command arguments
 and results, storage values, and declarative UI action arguments therefore accept
@@ -219,3 +219,22 @@ Use `apiVersion: ">=0.1.3"`. See the
 ### Settings views (protocol 0.1.4)
 
 Declare `contributes.views[].location: "settings"` to render a declarative view in Settings → Extensions → your plugin. Use the existing `ui.views.update/open/focus/close` API. Opening navigates to that plugin's settings page, focusing targets the view, and closing closes the settings dialog only when that plugin page is selected. All settings views for that plugin render together. Visibility events follow settings navigation, closing and plugin enablement. Settings views are not exposed as sidebar tabs or display-visibility toggles. Only enabled plugins activate their settings views. Packages using this location must require `^0.1.4` or higher. SDK 0.1.6 provides this protocol; the installed NoteGen host must also implement it.
+
+
+## SDK 0.1.8 embedded views
+
+Protocol 0.1.5 adds new-tab, document top/bottom, file panel, editor toolbar, chat input, record list and status-bar panel locations. Embedded updates require the current `contextId` as `expectedContextId`. See [embedded views](https://github.com/codexu/note-gen-plugin-sdk/blob/main/EMBEDDED-VIEWS.md) for placement, lifecycle, permissions and a complete example.
+
+## Kanban and source handoff
+
+Protocol 0.1.6 adds a host-rendered Kanban block and explicit source-to-plugin document handoff. See [contract and integration notes](../../KANBAN.md). These changes require a matching protocol 0.1.6 host.
+
+## SDK 0.1.8 workflow APIs
+
+The matching protocol 0.1.6 host adds records, chat drafts, AI generation and
+awaitable confirmation/selection prompts. Helpers include `registerView`,
+`createDisposables`, `createTaskQueue`, `generateText`, `generateJson`, and saved
+note frontmatter read/update/query functions. See the
+[workflow guide](https://github.com/codexu/note-gen-plugin-sdk/blob/main/WORKFLOW-APIS.md)
+for permissions, examples and cancellation behavior. Installing the SDK alone
+does not upgrade an older NoteGen host.

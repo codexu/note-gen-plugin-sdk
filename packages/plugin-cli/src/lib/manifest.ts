@@ -32,6 +32,10 @@ const SUPPORTED_PERMISSIONS = Object.freeze({
   'notes.delete': new Set(['workspace-file', 'workspace-files', 'workspace-folder']),
   'notes.move': new Set(['workspace-folder']),
   'network.fetch': new Set(['network-origins']),
+  'records.read': new Set(['application']),
+  'records.write': new Set(['application']),
+  'chat.write': new Set(['application']),
+  'ai.generate': new Set(['application']),
 } as const)
 
 export interface ManifestValidationOptions {
@@ -478,8 +482,8 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
     viewIds.add(id)
     localizedTexts.push(validateLocalizedText(required(view, 'title', path), `${path}.title`))
     const location = stringValue(required(view, 'location', path), `${path}.location`)
-    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right'].includes(location)) {
-      fail('manifest.invalid-view', `${path}.location must be a supported sidebar, editor-tab, settings or title-bar location`, `${path}.location`)
+    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(location)) {
+      fail('manifest.invalid-view', `${path}.location must be a supported view location`, `${path}.location`)
     }
     if (Object.hasOwn(view, 'icon')) {
       const icon = stringValue(view.icon, `${path}.icon`)

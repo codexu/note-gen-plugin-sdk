@@ -1,0 +1,59 @@
+{
+  "manifestVersion": 1,
+  "id": "org.example.embedded-views",
+  "name": "Embedded component panels",
+  "description": "Eight host locations with context-checked updates. Requires a NoteGen host implementing protocol 0.1.5.",
+  "version": "1.0.0",
+  "apiVersion": "^0.1.5",
+  "minAppVersion": "0.37.1",
+  "platforms": [
+    "desktop"
+  ],
+  "entry": "dist/main.js",
+  "activationEvents": [],
+  "permissions": {},
+  "contributes": {
+    "views": [
+      {
+        "id": "org.example.embedded-views.0",
+        "title": "new-tab",
+        "location": "new-tab"
+      },
+      {
+        "id": "org.example.embedded-views.1",
+        "title": "document-top",
+        "location": "document-top"
+      },
+      {
+        "id": "org.example.embedded-views.2",
+        "title": "document-bottom",
+        "location": "document-bottom"
+      },
+      {
+        "id": "org.example.embedded-views.3",
+        "title": "file-panel",
+        "location": "file-panel"
+      },
+      {
+        "id": "org.example.embedded-views.4",
+        "title": "editor-toolbar",
+        "location": "editor-toolbar"
+      },
+      {
+        "id": "org.example.embedded-views.5",
+        "title": "chat-input",
+        "location": "chat-input"
+      },
+      {
+        "id": "org.example.embedded-views.6",
+        "title": "record-list",
+        "location": "record-list"
+      },
+      {
+        "id": "org.example.embedded-views.7",
+        "title": "status-bar-panel",
+        "location": "status-bar-panel"
+      }
+    ]
+  }
+}

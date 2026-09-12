@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.4' as const
+export const PLUGIN_API_VERSION = '0.1.6' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -15,6 +15,7 @@ export type PluginPermissionScope =
   | 'workspace-files'
   | 'workspace-folder'
   | 'network-origins'
+  | 'application'
 
 export interface PluginPermissionDeclaration<
   Scope extends PluginPermissionScope = PluginPermissionScope,
@@ -25,6 +26,10 @@ export interface PluginPermissionDeclaration<
 }
 
 export interface PluginPermissionDeclarations {
+  'records.read'?: PluginPermissionDeclaration<'application'>
+  'records.write'?: PluginPermissionDeclaration<'application'>
+  'chat.write'?: PluginPermissionDeclaration<'application'>
+  'ai.generate'?: PluginPermissionDeclaration<'application'>
   'editor.read'?: PluginPermissionDeclaration<'active-editor'>
   'editor.write'?: PluginPermissionDeclaration<'active-editor'>
   'notes.read'?: PluginPermissionDeclaration<
@@ -120,10 +125,13 @@ export interface PluginStatusBarContribution {
  * larger documents open in a popover. Ordering follows plugin ID then manifest order. */
 export type PluginTitleBarLocation = 'title-bar-left' | 'title-bar-center' | 'title-bar-right'
 
+/** Embedded surfaces follow the visible host context; they never open editor tabs. */
+export type PluginEmbeddedViewLocation = 'new-tab' | 'document-top' | 'document-bottom' | 'file-panel' | 'editor-toolbar' | 'chat-input' | 'record-list' | 'status-bar-panel'
+
 export interface PluginViewContribution {
   id: string
   title: string
-  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | 'settings' | PluginTitleBarLocation
+  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | 'settings' | PluginTitleBarLocation | PluginEmbeddedViewLocation
   icon?: string
 }
 
@@ -428,6 +436,8 @@ export interface PluginViewState {
   id: string
   location: PluginViewContribution['location']
   visible: boolean
+  /** Opaque embedded-surface token. Changes when the page/document changes. */
+  contextId?: string
 }
 
 export interface WorkspaceChangeEvent {
@@ -502,6 +512,8 @@ export type PluginUiBlock =
 
 export interface PluginUiDocument {
   blocks: readonly PluginUiBlock[]
+  /** Required for embedded views. Echo getState().contextId to reject stale asynchronous updates. */
+  expectedContextId?: string
   /** Apply only while this form input snapshot is current in the target surface. */
   expectedForm?: { formId: string; generation: string; revision: number }
 }
@@ -569,12 +581,55 @@ export interface PluginAttachment {
   base64: string
 }
 
+export interface PluginRecord {
+  id: number
+  tagId: number
+  type: 'scan' | 'text' | 'image' | 'link' | 'file' | 'recording' | 'todo'
+  content: string
+  description: string
+  createdAt: number
+  /** List results contain previews; read(id) returns the full supported text. */
+  truncated?: boolean
+  /** Opaque token required for updates. */
+  revision: string
+  completed?: boolean
+}
+export interface ListPluginRecordsOptions { tagId?: number; offset?: number; limit?: number }
+export interface CreatePluginRecordOptions { tagId: number; type: 'text' | 'todo'; content: string; description?: string; completed?: boolean }
+export interface UpdatePluginRecordOptions { id: number; expectedRevision: string; content?: string; description?: string; completed?: boolean; tagId?: number }
+export interface PluginRecordsApi {
+  /** Application-wide records, not restricted to the current workspace folder. */
+  readonly list: (options?: ListPluginRecordsOptions) => Promise<{ items: readonly PluginRecord[]; hasMore: boolean }>
+  readonly read: (id: number) => Promise<PluginRecord>
+  readonly tags: () => Promise<readonly { id: number; name: string }[]>
+  readonly create: (options: CreatePluginRecordOptions) => Promise<PluginRecord>
+  /** First version updates text/todo records only; no attachment or trash mutation. */
+  readonly update: (options: UpdatePluginRecordOptions) => Promise<PluginRecord>
+  readonly onDidChange: (listener: () => void | Promise<void>) => PluginDisposable
+}
+export interface PluginAiRequest { requestId: string; prompt: string; system?: string; maxOutputTokens?: number }
+export interface PluginAiStreamEvent { requestId: string; text: string }
+export interface PluginChatDraftOptions {
+  text: string
+  /** Appends by default; replacing a nonempty draft is rejected unless overwrite is explicit. */
+  mode?: 'append' | 'replace'
+  overwrite?: boolean
+}
+
+export type PluginCapability = 'embedded-views' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts'
+
+export type PluginPromptOptions =
+  | { type: 'confirm'; title: string; description?: string; confirmLabel?: string }
+  | { type: 'select'; title: string; description?: string; confirmLabel?: string; multiple?: boolean; options: readonly { value: string; label: string }[] }
+export type PluginPromptResult = boolean | readonly string[] | null
+
 export interface PluginContext {
   readonly plugin: {
     readonly id: string
     readonly version: string
     /** The concrete host API version, which may be newer than this SDK release. */
     readonly apiVersion: string
+    readonly capabilities?: readonly PluginCapability[]
   }
   /** Local diagnostics only. Messages are truncated to 1,000 characters and rate limited. Never log secrets. */
   readonly log: {
@@ -583,6 +638,17 @@ export interface PluginContext {
     readonly error: (message: string) => void
   }
   readonly signal: PluginAbortSignal
+  readonly records: PluginRecordsApi
+  readonly ai: {
+    /** Uses the configured primary model; never exposes credentials or chat history. */
+    readonly generate: (request: PluginAiRequest) => Promise<{ text: string }>
+    readonly cancel: (requestId: string) => Promise<void>
+    readonly onDidStream: (listener: (event: PluginAiStreamEvent) => void | Promise<void>) => PluginDisposable
+  }
+  readonly chat: {
+    /** Edits the active main-window composer without sending a message. */
+    readonly setDraft: (options: PluginChatDraftOptions) => Promise<void>
+  }
   readonly commands: {
     readonly executeHost: (command: PluginHostCommand) => Promise<void>
     readonly handle: (
@@ -617,6 +683,11 @@ export interface PluginContext {
     readonly list: (options?: ListNotesOptions) => Promise<ListNotesResult>
     /** Requires both notes.list and notes.read within the granted folder. */
     readonly search: (options: SearchNotesOptions) => Promise<SearchNotesResult>
+    /** Explicit user navigation only: durably saves and closes main-window editors
+     * for this path, returning the saved snapshot. Requires notes.read/write/open.
+     * Separate windows or AI generation return EditorBusy. Does not reserve the file;
+     * subsequent writes must still use expectedRevision and handle EditorBusy. */
+    readonly prepareForWrite: (options: ReadNoteOptions) => Promise<NoteSnapshot>
     /** Main window only. Close every tab, pane, and separate window for the target first; otherwise EditorBusy. */
     readonly write: (options: WriteNoteOptions) => Promise<WriteNoteResult>
     /** Main window only. Source and destination must be closed in every editor; otherwise EditorBusy. */
@@ -648,6 +719,7 @@ export interface PluginContext {
     readonly workspace: PluginStorageArea
   }
   readonly ui: {
+    readonly prompt: (options: PluginPromptOptions) => Promise<PluginPromptResult>
     readonly showNotice: (message: string) => Promise<void>
     readonly statusBar: {
       readonly update: (id: string, state: PluginStatusBarUpdate) => Promise<void>
@@ -815,7 +887,31 @@ export interface PluginItemListBlock {
   reorderLabel?: string
   actions?: readonly PluginUiAction[]
 }
+/** Host-rendered board. All events carry generation. A move carries cardId,
+ * fromColumnId, toColumnId and beforeCardId (null appends). Column reorder carries
+ * the complete columnIds array. The plugin must validate and persist each command.
+ * At most 30 columns and 500 cards in total. IDs are unique across the board. */
+export interface PluginKanbanBlock {
+  type: 'kanban'
+  id: string
+  generation: string
+  label: string
+  columns: readonly {
+    id: string
+    title: string
+    cards: readonly { id: string; title: string; description?: string; noteLabel?: string }[]
+  }[]
+  labels: { addCard: string; emptyColumn: string; editColumn: string; drag: string; saving: string; saved: string; search: string; noResults: string }
+  openCardCommand: string
+  addCardCommand: string
+  editColumnCommand: string
+  moveCardCommand: string
+  reorderColumnsCommand: string
+  openNoteCommand?: string
+  disabled?: boolean
+}
 export type PluginExtendedUiBlock =
+  | PluginKanbanBlock
   | PluginItemListBlock
   | { type: 'layout'; id: string; direction?: 'row' | 'column'; gap?: 'small' | 'medium' | 'large'; blocks: readonly PluginUiBlock[] }
   | { type: 'section'; id: string; title: string; collapsible?: boolean; defaultOpen?: boolean; blocks: readonly PluginUiBlock[] }
@@ -902,6 +998,26 @@ function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unkn
       keys(v, ['type', 'id', 'label', 'actions'])
       const actions = array(v.actions, 20).map(action); unique(actions)
       return { type: 'toolbar', id: text(v.id, 160), label: text(v.label, 160), actions }
+    }
+    case 'kanban': {
+      keys(v, ['type', 'id', 'generation', 'label', 'columns', 'labels', 'openCardCommand', 'addCardCommand', 'editColumnCommand', 'moveCardCommand', 'reorderColumnsCommand', 'openNoteCommand', 'disabled'])
+      const columns = array(v.columns, 30).map(value => {
+        const col = record(value); keys(col, ['id', 'title', 'cards'])
+        const cards = array(col.cards, 500).map(value => {
+          const card = record(value); keys(card, ['id', 'title', 'description', 'noteLabel'])
+          return { id: text(card.id, 160), title: text(card.title, 240), description: optionalText(card.description, 2000), noteLabel: optionalText(card.noteLabel, 500) }
+        })
+        return { id: text(col.id, 160), title: text(col.title, 120), cards }
+      })
+      const cards = columns.flatMap(column => column.cards)
+      if (cards.length > 500) fail()
+      unique([...columns, ...cards])
+      if ([...columns, ...cards].some(item => item.id.startsWith('drop:'))) fail()
+      const l = record(v.labels)
+      keys(l, ['addCard', 'emptyColumn', 'editColumn', 'drag', 'saving', 'saved', 'search', 'noResults'])
+      return { type: 'kanban', id: text(v.id, 160), generation: text(v.generation, 160), label: text(v.label, 240), columns,
+        labels: { addCard: text(l.addCard, 160), emptyColumn: text(l.emptyColumn), editColumn: text(l.editColumn, 160), drag: text(l.drag, 160), saving: text(l.saving, 160), saved: text(l.saved, 160), search: text(l.search, 160), noResults: text(l.noResults) },
+        openCardCommand: text(v.openCardCommand, 220), addCardCommand: text(v.addCardCommand, 220), editColumnCommand: text(v.editColumnCommand, 220), moveCardCommand: text(v.moveCardCommand, 220), reorderColumnsCommand: text(v.reorderColumnsCommand, 220), openNoteCommand: optionalText(v.openNoteCommand, 220), disabled: boolean(v.disabled) }
     }
     case 'item-list': {
       keys(v, ['type', 'id', 'generation', 'label', 'emptyText', 'items', 'openCommand', 'toggleCommand', 'reorderCommand', 'reorderLabel', 'actions'])
@@ -1061,3 +1177,19 @@ export type PluginPreviewRequest =
   | { id: number; method: 'readDocument'; offset: number; length: number }
   | { id: number; method: 'readAsset'; path: string }
 export type PluginPreviewResponse = { id: number; result: Uint8Array } | { id: number; error: string }
+
+export { registerView, createDisposables } from './view-helper.js'
+export type { PluginViewRenderer } from './view-helper.js'
+
+export { readNoteProperties, updateNoteProperties, queryNoteProperties } from './note-properties.js'
+export type { PluginNoteProperties } from './note-properties.js'
+
+/** Older hosts without capability metadata report false instead of relying on SDK version guesses. */
+export function supportsCapability(context: PluginContext, capability: PluginCapability): boolean {
+  return context.plugin.capabilities?.includes(capability) ?? false
+}
+
+export { createTaskQueue } from './tasks.js'
+export type { PluginTaskQueue, PluginTaskState, PluginTaskHandle } from './tasks.js'
+
+export { generateText, generateJson } from './ai-helper.js'

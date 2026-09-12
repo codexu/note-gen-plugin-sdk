@@ -281,6 +281,7 @@
         "description": { "$ref": "#/$defs/localizedText" }
       }
     },
+    "applicationPermission": { "allOf": [{ "$ref": "#/$defs/permission" }, { "properties": { "scope": { "const": "application" } } }] },
     "activeEditorPermission": {
       "allOf": [
         { "$ref": "#/$defs/permission" },
@@ -303,6 +304,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "records.read": { "$ref": "#/$defs/applicationPermission" },
+        "records.write": { "$ref": "#/$defs/applicationPermission" },
+        "chat.write": { "$ref": "#/$defs/applicationPermission" },
+        "ai.generate": { "$ref": "#/$defs/applicationPermission" },
         "editor.read": { "$ref": "#/$defs/activeEditorPermission" },
         "editor.write": { "$ref": "#/$defs/activeEditorPermission" },
         "notes.read": { "$ref": "#/$defs/filePermission" },
@@ -439,7 +444,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/namespacedId" },
         "title": { "$ref": "#/$defs/localizedText" },
-        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab", "settings", "title-bar-left", "title-bar-center", "title-bar-right"] },
+        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab", "settings", "title-bar-left", "title-bar-center", "title-bar-right", "new-tab", "document-top", "document-bottom", "file-panel", "editor-toolbar", "chat-input", "record-list", "status-bar-panel"] },
         "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 }
       }
     },

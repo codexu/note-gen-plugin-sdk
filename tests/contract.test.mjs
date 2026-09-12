@@ -3,6 +3,11 @@ import { test } from 'node:test'
 
 import {
   PLUGIN_API_VERSION,
+  registerView,
+  readNoteProperties,
+  updateNoteProperties,
+  createTaskQueue,
+  generateJson,
   isValidPluginMenuCondition,
   matchesPluginMenuCondition,
   flattenPluginUiBlocks,
@@ -43,7 +48,7 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.4')
+  assert.equal(PLUGIN_API_VERSION, '0.1.6')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
 })
 
@@ -340,4 +345,103 @@ test('settings views share visibility and reject pre-settings protocol hosts', a
   assert.equal((await host.context.ui.views.getState(views[0].id)).visible, false)
   assert.deepEqual(events.map(event => event.visible), [true, true, false, false])
   await host.deactivate()
+})
+
+
+test('embedded views reject updates after context switches and do not navigate to absent surfaces', async () => {
+  const locations = ['new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel']
+  const views = locations.map((location, index) => ({ id: `com.example.contract.embedded${index}`, title: location, location }))
+  const embedded = { ...manifest, apiVersion: '^0.1.5', contributes: { ...manifest.contributes, views } }
+  assert.equal(validatePluginManifest(embedded).contributes.views.length, locations.length)
+  assert.throws(() => validatePluginManifest(embedded, { apiVersion: '0.1.4' }))
+  const host = createPluginTestHost({ manifest: embedded })
+  await host.activate({ activate() {} })
+  const id = views[1].id
+  const events = []
+  host.context.ui.views.onDidChange(state => { events.push(state) })
+  await host.context.ui.views.open(id)
+  assert.equal((await host.context.ui.views.getState(id)).visible, false)
+  await host.setEmbeddedViewContext(id, 'document-a')
+  await host.context.ui.views.update(id, { blocks: [{ type: 'text', text: 'A' }], expectedContextId: 'document-a' })
+  await host.setEmbeddedViewContext(id, 'document-b')
+  assert.equal(host.views[id], undefined)
+  await assert.rejects(host.context.ui.views.update(id, { blocks: [], expectedContextId: 'document-a' }), { code: 'StaleRevision' })
+  await assert.rejects(host.context.ui.views.update(id, { blocks: [] }), { code: 'StaleRevision' })
+  await host.context.ui.views.update(id, { blocks: [], expectedContextId: 'document-b' })
+  await host.setEmbeddedViewContext(id, null)
+  await assert.rejects(host.context.ui.views.update(id, { blocks: [], expectedContextId: 'document-b' }), { code: 'StaleRevision' })
+  assert.deepEqual(events.filter(state => state.visible).map(state => state.contextId), ['document-a', 'document-b'])
+  await host.deactivate()
+})
+
+
+test('record updates reject stale revisions and record grants are independent from note grants', async () => {
+  const granted = { ...manifest, permissions: { 'records.read': { scope: 'application' }, 'records.write': { scope: 'application' }, 'chat.write': { scope: 'application' } } }
+  const host = createPluginTestHost({ manifest: granted })
+  await host.activate({ activate() {} })
+  const todo = await host.context.records.create({ tagId: 1, type: 'todo', content: 'Review', completed: false })
+  const changed = await host.context.records.update({ id: todo.id, expectedRevision: todo.revision, completed: true })
+  assert.equal(changed.completed, true)
+  await assert.rejects(host.context.records.update({ id: todo.id, expectedRevision: todo.revision, content: 'Stale' }), { code: 'StaleRevision' })
+  assert.equal((await host.context.records.list()).items.length, 1)
+  await host.context.chat.setDraft({ text: 'Keep this draft' })
+  await assert.rejects(host.context.chat.setDraft({ text: 'Replace', mode: 'replace' }), { code: 'Conflict' })
+  await host.context.chat.setDraft({ text: 'Replace', mode: 'replace', overwrite: true })
+  const denied = createPluginTestHost({ manifest })
+  await denied.activate({ activate() {} })
+  await assert.rejects(denied.context.records.list(), { code: 'PermissionDenied' })
+  await denied.deactivate(); await host.deactivate()
+})
+
+test('property patches preserve Markdown bytes and reject stale writes and duplicate YAML keys', async () => {
+  const body = '# Title\r\n\r\n  Keep this body.\r\n'
+  const host = createPluginTestHost({ manifest, notes: [{ path: 'Notes/properties.md', content: '---\r\nstatus: draft\r\ntags: [work]\r\n---\r\n' + body, revision: 1 }, { path: 'Notes/bad.md', content: '---\na: 1\na: 2\n---\n' }] })
+  await host.activate({ activate() {} })
+  const before = await readNoteProperties(host.context, 'Notes/properties.md')
+  assert.equal(before.properties.status, 'draft')
+  await updateNoteProperties(host.context, { path: before.path, expectedRevision: before.revision, set: { status: 'done' } })
+  assert.ok((await host.context.notes.read({ path: before.path })).content.endsWith(body))
+  await assert.rejects(updateNoteProperties(host.context, { path: before.path, expectedRevision: before.revision, set: { status: 'stale' } }), { code: 'StaleRevision' })
+  await assert.rejects(readNoteProperties(host.context, 'Notes/bad.md'), { code: 'InvalidPath' })
+  await host.deactivate()
+})
+
+test('registerView cancels old rendering when the embedded context changes', async () => {
+  const id = 'com.example.contract.panel'
+  const host = createPluginTestHost({ manifest: { ...manifest, contributes: { ...manifest.contributes, views: [{ id, title: 'Panel', location: 'new-tab' }] } } })
+  await host.activate({ activate() {} })
+  let finishOld
+  let oldSignal
+  const view = registerView(host.context, { id, render: async ({ state, signal }) => {
+    if (state.contextId === 'old') { oldSignal = signal; await new Promise(resolve => { finishOld = resolve }) }
+    return { blocks: [{ type: 'text', text: state.contextId }] }
+  } })
+  const old = host.setEmbeddedViewContext(id, 'old')
+  await new Promise(resolve => setImmediate(resolve))
+  await host.setEmbeddedViewContext(id, 'new')
+  assert.equal(oldSignal.aborted, true)
+  finishOld(); await old
+  assert.equal(host.views[id].blocks[0].text, 'new')
+  view.dispose(); await host.deactivate()
+})
+
+test('task queues keep cancellation from exceeding concurrency and validate AI JSON locally', async () => {
+  const host = createPluginTestHost({ manifest: { ...manifest, permissions: { 'ai.generate': { scope: 'application' } } }, aiGenerate: async () => '{"answer":42}' })
+  await host.activate({ activate() {} })
+  const queue = createTaskQueue(host.context, 1)
+  let finishFirst
+  const first = queue.enqueue('First', async () => new Promise(resolve => { finishFirst = resolve }))
+  const second = queue.enqueue('Second', async () => 2)
+  await new Promise(resolve => setImmediate(resolve))
+  const cancelled = assert.rejects(first.result, { code: 'Cancelled' })
+  first.cancel()
+  assert.equal(queue.snapshot()[1].status, 'queued')
+  finishFirst(1); await cancelled
+  assert.equal(await second.result, 2)
+  const object = await generateJson(host.context, { requestId: 'json', prompt: 'Answer' }, value => {
+    assert.equal(value.answer, 42)
+    return value
+  })
+  assert.equal(object.answer, 42)
+  queue.dispose(); await host.deactivate()
 })

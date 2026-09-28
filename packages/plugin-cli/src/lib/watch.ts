@@ -3,7 +3,10 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import { buildPluginProject, type BuildPluginProjectOptions, type BuiltPluginProject } from './project.js'
 
-const ignored = new Set(['node_modules', '.git', '.notegen', 'dist', 'build', '.next'])
+// A plugin may declare generated resources under dist (for example an embedded
+// view). Watch those outputs too: their producer can run in watch mode beside
+// this CLI, while .notegen remains excluded to avoid rebuilding our own output.
+const ignored = new Set(['node_modules', '.git', '.notegen', 'build', '.next'])
 
 async function sourceRevision(root: string): Promise<string> {
   const hash = createHash('sha256')

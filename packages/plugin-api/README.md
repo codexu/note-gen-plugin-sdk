@@ -30,6 +30,24 @@ The package contains manifest, permission, contribution, lifecycle, host-context
 and stable error types. The frontmatter helpers depend on `yaml`; bundle value imports into the plugin entry.
 The public types do not require DOM types.
 
+Desktop plugins may bundle a `resources.embeddedViews` script and stylesheet,
+then render an `{ type: 'embedded-view', id: 'shell' }` block whose id matches
+that resource. The isolated frame receives a MessagePort; terminal plugins
+can use the application-scoped `terminal.open` permission to request the host's
+PTY capability through that port. The frame receives a
+`notegen:embedded-view-init` window message with a private `MessagePort`,
+responds with `{ type: 'frame.ready' }`, then sends numbered requests such as
+`{ id: 1, method: 'terminal.open', cols: 80, rows: 24 }` over the port. The
+host replies with `{ id, result }` or `{ id, error }` and forwards base64 PTY
+bytes as `terminal.output` events. Terminal setup, presentation and interaction
+belong to the plugin bundle.
+The browser bundle runs in an opaque-origin iframe and communicates with NoteGen
+through a terminal-only MessagePort. It can own xterm and all terminal UI;
+the NoteGen host owns only PTY sessions, permission checks, and cleanup. The
+shell starts in the current workspace with the user's operating-system access.
+The block is unavailable on mobile and web. Set `minAppVersion` to the first
+compatible NoteGen release before publishing the plugin.
+
 Values that cross the runtime boundary use `PluginJsonValue`. Command arguments
 and results, storage values, and declarative UI action arguments therefore accept
 only finite JSON-compatible data. Convert class instances such as `Date`, maps,
@@ -224,6 +242,18 @@ Declare `contributes.views[].location: "settings"` to render a declarative view 
 ## SDK 0.1.8 embedded views
 
 Protocol 0.1.5 adds new-tab, document top/bottom, file panel, editor toolbar, chat input, record list and status-bar panel locations. Embedded updates require the current `contextId` as `expectedContextId`. See [embedded views](https://github.com/codexu/note-gen-plugin-sdk/blob/main/EMBEDDED-VIEWS.md) for placement, lifecycle, permissions and a complete example.
+
+Use `editor-tab` for a dedicated editor tab. Declare a view at that location,
+then call `context.ui.views.open(viewId)` from a command or let the user open it
+from the editor tab bar's `+` menu. The host owns the tab, while the plugin owns
+its content and lifecycle. The optional `order` field controls its position
+among plugin entries in that menu.
+
+Isolated embedded views receive a resolved `theme` object in their initialization
+message and in `host.theme` port messages when NoteGen's appearance changes.
+It includes the background, foreground, primary, muted, border and error colors,
+plus the app font family, root font size and light/dark color scheme. The original
+top-level `background` and `foreground` fields remain available.
 
 ## Kanban and source handoff
 

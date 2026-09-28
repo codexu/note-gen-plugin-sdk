@@ -23,6 +23,7 @@ const SUPPORTED_PERMISSIONS = Object.freeze({
   'clipboard.write': new Set(['application']),
   'files.export': new Set(['application']),
   'editor.style': new Set(['application']),
+  'terminal.open': new Set(['application']),
   'editor.read': new Set(['active-editor']),
   'editor.write': new Set(['active-editor']),
   'notes.read': new Set(['workspace-file', 'workspace-files', 'workspace-folder']),
@@ -479,14 +480,18 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
   for (const [index, rawView] of views.entries()) {
     const path = `$.contributes.views[${index}]`
     const view = objectValue(rawView, path)
-    assertAllowedKeys(view, ['id', 'title', 'location', 'icon'], path)
+    assertAllowedKeys(view, ['id', 'title', 'location', 'icon', 'order'], path)
     const id = validateNamespacedId(required(view, 'id', path), pluginId, `${path}.id`)
     if (viewIds.has(id)) fail('manifest.duplicate-view', `View ${id} is declared more than once`, `${path}.id`)
     viewIds.add(id)
     localizedTexts.push(validateLocalizedText(required(view, 'title', path), `${path}.title`))
     const location = stringValue(required(view, 'location', path), `${path}.location`)
-    if (!['left-sidebar', 'right-sidebar', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(location)) {
+    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(location)) {
       fail('manifest.invalid-view', `${path}.location must be a supported view location`, `${path}.location`)
+    }
+    if (Object.hasOwn(view, 'order')) {
+      const order = view.order
+      if (typeof order !== 'number' || !Number.isInteger(order) || order < -10000 || order > 10000) fail('manifest.invalid-view', `${path}.order must be an integer from -10000 to 10000`, `${path}.order`)
     }
     if (Object.hasOwn(view, 'icon')) {
       const icon = stringValue(view.icon, `${path}.icon`)
@@ -680,6 +685,7 @@ export function validatePluginManifest(
     try {
       validatePluginResources(manifest.resources)
       if (manifest.resources.documentPreviews?.length && !objectValue(manifest.permissions, '$.permissions')['attachments.read']) throw new Error('Previews require attachments.read')
+      if (manifest.resources.embeddedViews?.length && !platformNames.includes('desktop')) throw new Error('Embedded views require desktop support')
       for (const path of pluginResourcePaths(manifest.resources)) {
         const bytes = options.files?.get(path)
         if (options.files && !bytes) throw new Error(`Missing resource: ${path}`)

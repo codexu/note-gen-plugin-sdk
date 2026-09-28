@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-api",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Public TypeScript contract for NoteGen plugins.",
   "license": "MIT",
   "type": "module",
@@ -27,6 +27,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "check:contract": "node -e \"const fs=require('node:fs');const pkg=require('./package.json');const source=fs.readFileSync('src/index.ts','utf8');const match=source.match(/PLUGIN_API_VERSION = '([^']+)'/);if(!match)throw new Error('Missing PLUGIN_API_VERSION');if(match[1]!==pkg.notegen.pluginApiVersion)throw new Error('Package contract metadata '+pkg.notegen.pluginApiVersion+' does not match exported plugin API '+match[1]);\"",
     "build": "pnpm run clean && pnpm run check:contract && tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --noCheck --preserveWatchOutput",
     "prepack": "pnpm run build"
   },
   "publishConfig": {
@@ -43,7 +44,7 @@
     "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
   },
   "notegen": {
-    "pluginApiVersion": "0.1.7"
+    "pluginApiVersion": "0.1.8"
   },
   "dependencies": {
     "yaml": "^2.8.0"

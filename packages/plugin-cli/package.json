@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-cli",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Create, validate, build, package, sign, and verify NoteGen plugins.",
   "license": "MIT",
   "type": "module",
@@ -26,6 +26,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "pnpm run clean && tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --noCheck --preserveWatchOutput",
     "prepack": "pnpm run build"
   },
   "publishConfig": {

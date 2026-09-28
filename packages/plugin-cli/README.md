@@ -25,13 +25,18 @@ remain usable and display a missing-guide message.
 
 ## Watch mode
 
-Use `notegen-plugin dev [directory]` for watch mode. It polls source changes,
-serially builds, and replaces `.notegen/package` only after a successful build
-and package validation. In NoteGen Developer Mode, import and enable that
-directory and opt into Auto-reload for the plugin. Permission expansions still
-require review. This rebuilds the runtime, not state-preserving hot replacement.
+Use `notegen-plugin dev [directory]` for watch mode. It polls source and generated
+`dist` changes, serially bundles the plugin, and replaces `.notegen/package`
+only after successful validation. In NoteGen Developer Mode, import and enable
+the project directory once; NoteGen reloads subsequent package revisions
+automatically. Permission expansions still require review. Reloading restarts
+the plugin runtime and any embedded view, so active sessions are not preserved.
 Watch mode does not run type checks or tests. Project-external dependencies and
-ignored output/node_modules directories require restarting the watcher.
+`node_modules` changes require restarting the watcher.
+
+When developing the SDK from its source checkout, `pnpm dev` watches the API and
+CLI TypeScript output. A plugin watch process must be restarted when the CLI
+itself changes; Node's `--watch` mode can do this automatically.
 
 `@notegen/plugin-cli` is the official command-line tool for creating,
 validating, building, packaging, signing, and verifying NoteGen plugins.

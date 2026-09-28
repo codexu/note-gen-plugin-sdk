@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.7' as const
+export const PLUGIN_API_VERSION = '0.1.8' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -33,6 +33,7 @@ export interface PluginPermissionDeclarations {
   'clipboard.write'?: PluginPermissionDeclaration<'application'>
   'files.export'?: PluginPermissionDeclaration<'application'>
   'editor.style'?: PluginPermissionDeclaration<'application'>
+  'terminal.open'?: PluginPermissionDeclaration<'application'>
   'editor.read'?: PluginPermissionDeclaration<'active-editor'>
   'editor.write'?: PluginPermissionDeclaration<'active-editor'>
   'notes.read'?: PluginPermissionDeclaration<
@@ -135,8 +136,9 @@ export type PluginEmbeddedViewLocation = 'new-tab' | 'document-top' | 'document-
 export interface PluginViewContribution {
   id: string
   title: string
-  location: 'left-sidebar' | 'right-sidebar' | 'settings' | PluginTitleBarLocation | PluginEmbeddedViewLocation
+  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | 'settings' | PluginTitleBarLocation | PluginEmbeddedViewLocation
   icon?: string
+  order?: number
 }
 
 export type PluginMenuLocation =
@@ -621,7 +623,7 @@ export interface PluginChatDraftOptions {
   overwrite?: boolean
 }
 
-export type PluginCapability = 'embedded-views' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'clipboard-write' | 'file-export' | 'editor-styles'
+export type PluginCapability = 'embedded-views' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'clipboard-write' | 'file-export' | 'editor-styles' | 'terminal'
 
 export type PluginPromptOptions =
   | { type: 'confirm'; title: string; description?: string; confirmLabel?: string }
@@ -1039,6 +1041,7 @@ export type PluginExtendedUiBlock =
   | { type: 'tabs'; id: string; label: string; tabs: readonly { id: string; label: string; blocks: readonly PluginUiBlock[] }[] }
   | { type: 'toolbar'; id: string; label: string; actions: readonly PluginUiAction[] }
   | { type: 'document-preview'; id: string; documentId: string; title: string; width?: 'mobile' | 'desktop' }
+  | { type: 'embedded-view'; id: string }
   | { type: 'markdown'; text: string }
   | { type: 'badge'; text: string; tone?: 'default' | 'secondary' | 'outline' | 'destructive' }
   | { type: 'empty'; title: string; description?: string; icon?: string }
@@ -1153,6 +1156,9 @@ function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unkn
     case 'document-preview':
       keys(v, ['type', 'id', 'documentId', 'title', 'width'])
       return { type: 'document-preview', id: text(v.id, 160), documentId: text(v.documentId, 160), title: text(v.title, 240), width: choice(v.width, ['mobile', 'desktop']) }
+    case 'embedded-view':
+      keys(v, ['type', 'id'])
+      return { type: 'embedded-view', id: text(v.id, 160) }
     case 'markdown': keys(v, ['type', 'text']); return { type: 'markdown', text: text(v.text, 20000, 0) }
     case 'badge': keys(v, ['type', 'text', 'tone']); return { type: 'badge', text: text(v.text, 160), tone: choice(v.tone, ['default', 'secondary', 'outline', 'destructive']) }
     case 'empty': keys(v, ['type', 'title', 'description', 'icon']); return { type: 'empty', title: text(v.title, 240), description: optionalText(v.description, 2000), icon: optionalText(v.icon, 80) }
@@ -1183,11 +1189,63 @@ export interface PluginDocumentPreviewResource {
   /** Extra package files available through preview.readAsset(). */
   assets?: string[]
 }
+export interface PluginEmbeddedViewResource {
+  id: string
+  name: string
+  /** Self-contained browser bundle rendered in an isolated iframe. */
+  script: string
+  style: string
+}
+/** The host transfers a MessagePort with this window message. The frame must
+ * answer on that port with { type: 'frame.ready' } after initialization.
+ */
+export interface PluginEmbeddedViewInit {
+  type: 'notegen:embedded-view-init'
+  protocol: 1
+  token: string
+  locale: string
+  capabilities: readonly PluginCapability[]
+  background: string
+  foreground: string
+  theme?: PluginEmbeddedViewTheme
+}
+/** Resolved host colors and typography for isolated embedded views. The host
+ * sends the same payload in `host.theme` when its appearance changes. */
+export interface PluginEmbeddedViewTheme {
+  background: string
+  foreground: string
+  primary: string
+  muted: string
+  mutedForeground: string
+  border: string
+  destructive: string
+  fontFamily: string
+  rootFontSize: string
+  colorScheme: 'light' | 'dark'
+}
+export interface PluginEmbeddedViewThemeEvent {
+  type: 'host.theme'
+  theme: PluginEmbeddedViewTheme
+}
+/** PTY calls use { id, method, ...arguments } on the private frame port.
+ * Replies carry the same id and either result or error. Output and exit are
+ * independent messages with type 'terminal.output' or 'terminal.closed'.
+ * terminal.output data is base64-encoded PTY bytes.
+ */
+export type PluginTerminalFrameRequest =
+  | { id: number; method: 'terminal.open'; cols: number; rows: number }
+  | { id: number; method: 'terminal.write'; sessionId: string; data: string }
+  | { id: number; method: 'terminal.resize'; sessionId: string; cols: number; rows: number }
+  | { id: number; method: 'terminal.close'; sessionId: string }
+export type PluginTerminalFrameEvent =
+  | { type: 'terminal.output'; sessionId: string; data: string }
+  | { type: 'terminal.closed'; sessionId: string }
 export interface PluginResources {
   themes?: PluginThemeResource[]
   languages?: PluginLanguageResource[]
   fileIcons?: PluginFileIconRule[]
   documentPreviews?: PluginDocumentPreviewResource[]
+  embeddedViews?: PluginEmbeddedViewResource[]
 }
 /** The preview receives a MessagePort via notegen:preview-init, protocol 1.
  * Requests: { id, method: 'readDocument', offset, length } or
@@ -1233,11 +1291,11 @@ export function validatePluginResourcePath(value: unknown): asserts value is str
   })) throw new Error('Invalid resource path')
 }
 export function pluginResourcePaths(resources?: PluginResources): string[] {
-  return [...new Set([...(resources?.languages ?? []).map(x => x.messages), ...(resources?.documentPreviews ?? []).flatMap(x => [x.script, ...(x.assets ?? [])])])]
+  return [...new Set([...(resources?.languages ?? []).map(x => x.messages), ...(resources?.documentPreviews ?? []).flatMap(x => [x.script, ...(x.assets ?? [])]), ...(resources?.embeddedViews ?? []).flatMap(x => [x.script, x.style])])]
 }
 export function validatePluginResources(value: unknown): asserts value is PluginResources {
   const r = object(value)
-  keys(r, ['themes', 'languages', 'fileIcons', 'documentPreviews'])
+  keys(r, ['themes', 'languages', 'fileIcons', 'documentPreviews', 'embeddedViews'])
   for (const [kind, raw] of Object.entries(r)) {
     if (!Array.isArray(raw) || raw.length > (kind === 'fileIcons' ? 500 : 30)) throw new Error('Resource limit exceeded')
     const ids = new Set<string>()
@@ -1274,6 +1332,11 @@ export function validatePluginResources(value: unknown): asserts value is Plugin
         keys(icon, ['name', 'emoji'])
         if (icon.name !== undefined) { text(icon.name, 80); if (!/^[a-z0-9-]+$/.test(icon.name)) throw new Error('Invalid icon name') }
         else { text(icon.emoji, 64); if (icon.emoji.length > 16 || !/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(icon.emoji)) throw new Error('Invalid emoji') }
+      } else if (kind === 'embeddedViews') {
+        keys(v, ['id', 'name', 'script', 'style'])
+        validatePluginResourcePath(v.script)
+        validatePluginResourcePath(v.style)
+        if (!v.script.endsWith('.js') || !v.style.endsWith('.css')) throw new Error('Embedded view requires a JavaScript bundle and stylesheet')
       } else {
         keys(v, ['id', 'name', 'extensions', 'script', 'assets'])
         if (!Array.isArray(v.extensions) || !v.extensions.length || v.extensions.length > 30 || v.extensions.some(x => typeof x !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$(?![\s\S])/.test(x))) throw new Error('Invalid preview extensions')

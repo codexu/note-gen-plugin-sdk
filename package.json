@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 build",
+    "dev": "pnpm --parallel --filter @notegen/plugin-api --filter @notegen/plugin-cli run dev",
     "check:contract": "pnpm --filter @notegen/plugin-api check:contract",
     "test": "pnpm build && node --test",
     "clean": "pnpm -r --if-present clean"

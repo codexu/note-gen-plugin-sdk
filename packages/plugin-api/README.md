@@ -238,3 +238,9 @@ note frontmatter read/update/query functions. See the
 [workflow guide](https://github.com/codexu/note-gen-plugin-sdk/blob/main/WORKFLOW-APIS.md)
 for permissions, examples and cancellation behavior. Installing the SDK alone
 does not upgrade an older NoteGen host.
+
+## SDK 0.1.9 document capabilities
+
+Protocol 0.1.7 adds `documents.render/release`, the runtime-owned `document-preview` UI block, `clipboard.write`, `files.export` and `editor.setStyles/clearStyles`. Rendering accepts Markdown or sanitized HTML with `.article` CSS and explicit image mappings. Clipboard/file output is permission checked and user invoked; editor styles are automatically cleared with the plugin runtime. See [host contract, limits and integration](../../HOST-DOCUMENT-INTEGRATION.md).
+
+See the [document publisher example](../../examples/document-publisher) for Markdown/HTML rendering, raw output and document-handle lifecycle.

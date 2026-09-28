@@ -26,7 +26,7 @@
       { "id": "com.example.interaction-lab.stale", "title": "验证过期 revision 被拒绝" },
       { "id": "com.example.interaction-lab.trash", "title": "移除固定测试笔记到废纸篓" }
     ],
-    "views": [{ "id": "com.example.interaction-lab.view", "title": "交互实验室", "location": "editor-tab" }],
+    "views": [{ "id": "com.example.interaction-lab.view", "title": "交互实验室", "location": "right-sidebar" }],
     "statusBar": [{ "id": "com.example.interaction-lab.status", "alignment": "right" }]
   },
   "license": "MIT"

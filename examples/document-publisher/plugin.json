@@ -1,0 +1,65 @@
+{
+  "manifestVersion": 1,
+  "id": "org.example.document-publisher",
+  "name": "Document publisher sample",
+  "version": "1.0.0",
+  "apiVersion": "^0.1.7",
+  "minAppVersion": "0.0.0",
+  "platforms": [
+    "desktop"
+  ],
+  "entry": "dist/main.js",
+  "activationEvents": [
+    "onWorkspace:open"
+  ],
+  "permissions": {
+    "editor.read": {
+      "scope": "active-editor"
+    },
+    "clipboard.write": {
+      "scope": "application"
+    },
+    "files.export": {
+      "scope": "application"
+    },
+    "editor.style": {
+      "scope": "application",
+      "optional": true
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "id": "org.example.document-publisher.render",
+        "title": "Render active Markdown"
+      },
+      {
+        "id": "org.example.document-publisher.html",
+        "title": "Render generated HTML"
+      },
+      {
+        "id": "org.example.document-publisher.copy",
+        "title": "Copy rendered document"
+      },
+      {
+        "id": "org.example.document-publisher.export",
+        "title": "Export rendered document"
+      },
+      {
+        "id": "org.example.document-publisher.style",
+        "title": "Apply editor styles"
+      },
+      {
+        "id": "org.example.document-publisher.reset",
+        "title": "Reset editor styles"
+      }
+    ],
+    "views": [
+      {
+        "id": "org.example.document-publisher.preview",
+        "title": "Document publisher",
+        "location": "right-sidebar"
+      }
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 import { createMemoryRecords } from './records.js'
-import { validatePluginResources } from '@notegen/plugin-api'
+import { validatePluginClipboardContent, validatePluginExportFileOptions, validatePluginRenderDocumentOptions, PLUGIN_DOCUMENT_LIMITS, validatePluginResources } from '@notegen/plugin-api'
 import { parsePluginUiExtension, flattenPluginUiBlocks } from '@notegen/plugin-api'
 import {
   PLUGIN_API_VERSION,
@@ -7,6 +7,7 @@ import {
 } from '@notegen/plugin-api'
 import { createHash } from 'node:crypto'
 import type {
+  PluginRenderDocumentOptions, PluginRenderedDocument, PluginExportFileOptions, PluginExportFileResult, PluginClipboardContent,
   ActiveEditorContext,
   ApplyEditorEditOptions,
   ApplyEditorEditsOptions,
@@ -118,6 +119,7 @@ export type PluginTestCallName =
   | 'workspace.onDidChange'
   | 'calendar.resolveDay'
   | 'notes.read'
+  | 'documents.render' | 'documents.release' | 'clipboard.write' | 'files.export' | 'editor.setStyles' | 'editor.clearStyles'
   | 'fileIcons.setRules'
   | 'fileIcons.clear'
   | 'attachments.read'
@@ -194,6 +196,10 @@ export interface PluginTestScopedPermissionGrant {
 export type PluginTestPermissionGrant = boolean | PluginTestScopedPermissionGrant
 
 export interface PluginTestHostOptions {
+  /** Inject a renderer: the Node test host does not pretend to implement browser CSS layout. */
+  readonly renderDocument?: (options: PluginRenderDocumentOptions) => Promise<Omit<PluginRenderedDocument, 'id'>>
+  /** Receives a copy of the owned document when exporting by documentId. */
+  readonly exportFile?: (options: PluginExportFileOptions, document?: PluginRenderedDocument) => Promise<PluginExportFileResult>
   readonly manifest: PluginManifestV1
   /** Declared permissions default to unrestricted grants; these values override them. */
   readonly permissions?: Readonly<Partial<Record<PluginPermissionName, PluginTestPermissionGrant>>>
@@ -232,6 +238,8 @@ export interface PluginTestHost {
   readonly context: PluginContext
   readonly active: boolean
   readonly callHistory: readonly PluginTestCall[]
+  readonly clipboard: PluginClipboardContent | null
+  readonly editorStyles: string
   readonly notices: readonly string[]
   readonly statusBar: Readonly<Record<string, PluginStatusBarUpdate>>
   readonly notes: readonly NoteSnapshot[]
@@ -379,6 +387,14 @@ class MemoryPluginTestHost implements PluginTestHost {
   }>()
   private readonly calls: PluginTestCall[] = []
   private readonly recordApi: PluginContext['records']
+  private readonly renderedDocuments = new Map<string, PluginRenderedDocument>()
+  private readonly documentRenderer?: PluginTestHostOptions['renderDocument']
+  private readonly fileExporter?: PluginTestHostOptions['exportFile']
+  private clipboardContent: PluginClipboardContent | null = null
+  private editorCss = ''
+  private userCommandDepth = 0
+  private documentRendering = false
+  private nextDocumentId = 1
   private chatDraft = ''
   private promptPending = false
   private readonly promptHandler?: PluginTestHostOptions['prompt']
@@ -481,6 +497,8 @@ class MemoryPluginTestHost implements PluginTestHost {
 
     this.promptHandler = options.prompt
     this.aiGenerate = options.aiGenerate
+    this.documentRenderer = options.renderDocument
+    this.fileExporter = options.exportFile
     this.recordApi = createMemoryRecords({
       ...(options.records ? { records: options.records } : {}),
       ...(options.recordTags ? { tags: options.recordTags } : {}),
@@ -619,7 +637,10 @@ class MemoryPluginTestHost implements PluginTestHost {
     const safeArgument = argument === undefined
       ? undefined
       : cloneJsonValue(argument, nonJsonCommandArgument)
-    const result = await this.awaitWhileActive(() => handler(safeArgument))
+    this.userCommandDepth++
+    let result: PluginCommandResult
+    try { result = await this.awaitWhileActive(() => handler(safeArgument)) }
+    finally { this.userCommandDepth-- }
     return result === undefined
       ? undefined
       : cloneJsonValue(result, nonJsonCommandResult)
@@ -775,7 +796,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         id: this.manifest.id,
         version: this.manifest.version,
         apiVersion: PLUGIN_API_VERSION,
-        capabilities: this.surface === 'main' ? ['embedded-views', 'records', 'chat-draft', 'ai-generation', 'ui-prompts'] as const : [],
+        capabilities: this.surface === 'main' ? ['embedded-views', 'records', 'chat-draft', 'ai-generation', 'ui-prompts', 'document-rendering', 'document-preview', 'clipboard-write', 'file-export', 'editor-styles'] as const : ['document-rendering', 'clipboard-write', 'file-export', 'editor-styles'] as const,
       }),
       log: Object.freeze({
         info: (message: string) => this.record('log.info', [String(message).slice(0, 1000)]),
@@ -783,6 +804,49 @@ class MemoryPluginTestHost implements PluginTestHost {
         error: (message: string) => this.record('log.error', [String(message).slice(0, 1000)]),
       }),
       signal: this.abortSignal,
+      documents: {
+        render: async options => {
+          this.assertUsable(); this.record('documents.render', [options])
+          validatePluginRenderDocumentOptions(options)
+          if (this.documentRendering) throw new PluginError('QuotaExceeded', 'Only one document render may run at once')
+          if (this.renderedDocuments.size >= 8) throw new PluginError('QuotaExceeded', 'Release old documents first')
+          if (!this.documentRenderer) throw new PluginError('UnavailableOnPlatform', 'Provide renderDocument in the test host options')
+          this.documentRendering = true
+          try {
+            const rendered = await this.documentRenderer(options)
+            if (typeof rendered.html !== 'string' || utf8Length(rendered.html) > PLUGIN_DOCUMENT_LIMITS.htmlBytes || typeof rendered.text !== 'string' || !Array.isArray(rendered.warnings)) throw new PluginError('QuotaExceeded', 'Invalid rendered document')
+            this.assertUsable()
+            const value: PluginRenderedDocument = { ...rendered, id: `document-${this.nextDocumentId++}` }
+            this.renderedDocuments.set(value.id, value)
+            return structuredClone(value)
+          } finally { this.documentRendering = false }
+        },
+        release: async id => { this.assertUsable(); this.record('documents.release', [id]); this.renderedDocuments.delete(id) },
+      },
+      clipboard: {
+        write: async content => {
+          this.assertUsable(); this.assertPermission('clipboard.write'); this.assertOutputUserCommand()
+          validatePluginClipboardContent(content)
+          const document = 'documentId' in content ? this.renderedDocuments.get(content.documentId) : undefined
+          if ('documentId' in content && !document) throw new PluginError('NotFound', 'Document is expired')
+          this.record('clipboard.write', [content])
+          this.clipboardContent = structuredClone(document ? { html: document.html, text: document.text } : content)
+        },
+      },
+      files: {
+        export: async options => {
+          this.assertUsable(); this.assertPermission('files.export'); this.assertOutputUserCommand()
+          validatePluginExportFileOptions(options)
+          if ('documentId' in options && !this.renderedDocuments.has(options.documentId)) throw new PluginError('NotFound', 'Document is expired')
+          if (!this.fileExporter) throw new PluginError('UnavailableOnPlatform', 'Provide exportFile in the test host options')
+          this.record('files.export', [options])
+          const document = 'documentId' in options ? this.renderedDocuments.get(options.documentId) : undefined
+          const result = await this.fileExporter(options, document ? structuredClone(document) : undefined)
+          if (!result || typeof result.saved !== 'boolean') throw new PluginError('RuntimeFailure', 'Invalid file export result')
+          this.assertUsable(); this.assertPermission('files.export')
+          return result
+        },
+      },
       records: this.recordApi,
       ai: {
         generate: async request => {
@@ -908,6 +972,8 @@ class MemoryPluginTestHost implements PluginTestHost {
         },
       }),
       editor: Object.freeze({
+        setStyles: async options => { this.assertUsable(); this.assertPermission('editor.style'); this.record('editor.setStyles', [options]); if (typeof options.css !== 'string' || utf8Length(options.css) > PLUGIN_DOCUMENT_LIMITS.cssBytes) throw new PluginError('QuotaExceeded', 'CSS exceeds its byte limit'); this.editorCss = options.css },
+        clearStyles: async () => { this.assertUsable(); this.assertPermission('editor.style'); this.record('editor.clearStyles'); this.editorCss = '' },
         getActiveEditor: async () => {
           this.record('editor.getActiveEditor')
           this.assertUsable()
@@ -1948,10 +2014,19 @@ class MemoryPluginTestHost implements PluginTestHost {
     this.calls.push(call)
   }
 
+  get clipboard(): PluginClipboardContent | null { return this.clipboardContent ? structuredClone(this.clipboardContent) : null }
+  get editorStyles(): string { return this.editorCss }
+
+  private assertOutputUserCommand(): void {
+    if (this.userCommandDepth < 1) throw new PluginError('PermissionDenied', 'Output requires a user-invoked command')
+  }
+
   private stop(reason: PluginError): void {
     this.lifecycle = 'stopped'
     this.abortSignal.abort(reason)
     for (const signal of this.aiRequests.values()) signal.abort(reason)
+    this.renderedDocuments.clear()
+    this.editorCss = ''
     this.aiRequests.clear()
     this.aiListeners.clear()
     this.clearRegistrations()

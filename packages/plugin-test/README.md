@@ -157,3 +157,7 @@ Use `await host.setEmbeddedViewContext(viewId, "page-a")` to simulate mounting a
 ## Kanban and source handoff
 
 Protocol 0.1.6 adds a host-rendered Kanban block and explicit source-to-plugin document handoff. See [contract and integration notes](../../KANBAN.md). These changes are source-only and require a matching host.
+
+## Document adapters (protocol 0.1.7)
+
+Pass `renderDocument(options)` and `exportFile(options, document?)` in `createPluginTestHost` options. File adapters receive the owned rendered document for document-ID exports and return `{ saved: boolean }`. Rendering adapters return `{ html, text, warnings, title? }`; the host allocates an owned ID. Missing adapters return `UnavailableOnPlatform`, since Node does not implement browser CSS or a save dialog. The shared input validator applies the same transport quotas. Use `host.clipboard`, `host.editorStyles` and `callHistory` to inspect effects. Invoke output through `host.executeCommand`; automatic listeners have no user-action scope. Browser CSS sanitization/layout and real WeChat pasting require host integration verification.

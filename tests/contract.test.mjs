@@ -48,8 +48,42 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.6')
+  assert.equal(PLUGIN_API_VERSION, '0.1.7')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
+})
+
+test('document output uses owned handles, explicit commands and separate grants', async () => {
+  const outputManifest = {
+    ...manifest,
+    apiVersion: '^0.1.7',
+    permissions: {
+      'clipboard.write': { scope: 'application' },
+      'files.export': { scope: 'application' },
+    },
+  }
+  assert.equal(validatePluginManifest(outputManifest).apiVersion, '^0.1.7')
+  const exported = []
+  const host = createPluginTestHost({
+    manifest: outputManifest,
+    permissions: { 'clipboard.write': true, 'files.export': true },
+    renderDocument: async ({ markdown }) => ({ html: `<p>${markdown}</p>`, text: markdown, warnings: [] }),
+    exportFile: async (options, document) => { exported.push({ options, document }); return { saved: true } },
+  })
+  await host.activate({ activate() {} })
+  const document = await host.context.documents.render({ markdown: 'hello', target: 'wechat' })
+  await assert.rejects(host.context.clipboard.write({ documentId: document.id }), error => error.code === 'PermissionDenied')
+  host.context.commands.handle('com.example.contract.refresh', async () => {
+    await host.context.clipboard.write({ documentId: document.id })
+    return host.context.files.export({ fileName: 'article.html', documentId: document.id })
+  })
+  assert.deepEqual(await host.executeCommand('com.example.contract.refresh'), { saved: true })
+  assert.deepEqual(host.clipboard, { html: '<p>hello</p>', text: 'hello' })
+  assert.equal(exported[0].document.id, document.id)
+  host.setPermission('files.export', false)
+  await assert.rejects(host.executeCommand('com.example.contract.refresh'), error => error.code === 'PermissionDenied')
+  await host.context.documents.release(document.id)
+  await assert.rejects(host.executeCommand('com.example.contract.refresh'), error => error.code === 'NotFound')
+  await host.deactivate()
 })
 
 test('test host exercises note, editor, UI, and scoped network capabilities', async () => {

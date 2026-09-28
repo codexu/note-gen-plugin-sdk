@@ -20,6 +20,9 @@ const LOCALIZATION_PATTERN = /^%([A-Za-z0-9][A-Za-z0-9._-]*)%$(?![\s\S])/u
 const NAMESPACED_ID_CHARACTERS = /^[A-Za-z0-9._-]+$(?![\s\S])/u
 const ICON_PATTERN = /^[A-Za-z0-9-]+$(?![\s\S])/u
 const SUPPORTED_PERMISSIONS = Object.freeze({
+  'clipboard.write': new Set(['application']),
+  'files.export': new Set(['application']),
+  'editor.style': new Set(['application']),
   'editor.read': new Set(['active-editor']),
   'editor.write': new Set(['active-editor']),
   'notes.read': new Set(['workspace-file', 'workspace-files', 'workspace-folder']),
@@ -482,7 +485,7 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
     viewIds.add(id)
     localizedTexts.push(validateLocalizedText(required(view, 'title', path), `${path}.title`))
     const location = stringValue(required(view, 'location', path), `${path}.location`)
-    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(location)) {
+    if (!['left-sidebar', 'right-sidebar', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(location)) {
       fail('manifest.invalid-view', `${path}.location must be a supported view location`, `${path}.location`)
     }
     if (Object.hasOwn(view, 'icon')) {

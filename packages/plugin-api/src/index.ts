@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.6' as const
+export const PLUGIN_API_VERSION = '0.1.7' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -30,6 +30,9 @@ export interface PluginPermissionDeclarations {
   'records.write'?: PluginPermissionDeclaration<'application'>
   'chat.write'?: PluginPermissionDeclaration<'application'>
   'ai.generate'?: PluginPermissionDeclaration<'application'>
+  'clipboard.write'?: PluginPermissionDeclaration<'application'>
+  'files.export'?: PluginPermissionDeclaration<'application'>
+  'editor.style'?: PluginPermissionDeclaration<'application'>
   'editor.read'?: PluginPermissionDeclaration<'active-editor'>
   'editor.write'?: PluginPermissionDeclaration<'active-editor'>
   'notes.read'?: PluginPermissionDeclaration<
@@ -125,13 +128,14 @@ export interface PluginStatusBarContribution {
  * larger documents open in a popover. Ordering follows plugin ID then manifest order. */
 export type PluginTitleBarLocation = 'title-bar-left' | 'title-bar-center' | 'title-bar-right'
 
-/** Embedded surfaces follow the visible host context; they never open editor tabs. */
+/** Embedded surfaces follow the visible host context; they never open editor tabs.
+ * The desktop host presents status-bar-panel content in a right-side drawer. */
 export type PluginEmbeddedViewLocation = 'new-tab' | 'document-top' | 'document-bottom' | 'file-panel' | 'editor-toolbar' | 'chat-input' | 'record-list' | 'status-bar-panel'
 
 export interface PluginViewContribution {
   id: string
   title: string
-  location: 'left-sidebar' | 'right-sidebar' | 'editor-tab' | 'settings' | PluginTitleBarLocation | PluginEmbeddedViewLocation
+  location: 'left-sidebar' | 'right-sidebar' | 'settings' | PluginTitleBarLocation | PluginEmbeddedViewLocation
   icon?: string
 }
 
@@ -423,8 +427,9 @@ export interface PluginFormBlock {
   id: string
   /** Change this token to explicitly reset values and feedback. */
   resetKey?: string
-  /** Debounced user changes; receives { formId, fieldId, values, revision, generation, dialogId? }. Return value is ignored. */
+  /** User changes; receives { formId, fieldId, values, revision, generation, dialogId? }. Return value is ignored. Changes are debounced unless submitDisabled is true. */
   changeCommand?: string
+  /** Disables submission; with changeCommand, hides the submit button and sends changes immediately. */
   submitDisabled?: boolean
   fields: readonly PluginFormField[]
   submitLabel: string
@@ -616,12 +621,113 @@ export interface PluginChatDraftOptions {
   overwrite?: boolean
 }
 
-export type PluginCapability = 'embedded-views' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts'
+export type PluginCapability = 'embedded-views' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'clipboard-write' | 'file-export' | 'editor-styles'
 
 export type PluginPromptOptions =
   | { type: 'confirm'; title: string; description?: string; confirmLabel?: string }
   | { type: 'select'; title: string; description?: string; confirmLabel?: string; multiple?: boolean; options: readonly { value: string; label: string }[] }
 export type PluginPromptResult = boolean | readonly string[] | null
+
+/** Pure document rendering: no filesystem reads or network requests. Selectors start with .article. */
+export type PluginRenderDocumentOptions = {
+  css?: string
+  title?: string
+  target?: 'html' | 'wechat'
+  /** Explicitly supplied raster images. Attachments require a separate attachments.read grant. */
+  images?: readonly { source: string; dataUrl: string }[]
+}
+  & ({ markdown: string; html?: never } | { html: string; markdown?: never })
+export interface PluginRenderedDocument {
+  title?: string
+  /** Ephemeral, owned by this plugin runtime and workspace. Call release when replacing a preview. */
+  id: string
+  /** Sanitized body fragment with inlined styles; shared by preview, clipboard and HTML export. */
+  html: string
+  text: string
+  warnings: readonly { code: 'image-unresolved' | 'external-link' | 'unsupported-content'; message: string; source?: string }[]
+}
+export type PluginClipboardContent = { text: string; html?: string } | { documentId: string }
+export type PluginExportFileOptions = { fileName: string } & (
+  | { documentId: string }
+  | { mimeType: string; text: string }
+  | { mimeType: string; base64: string }
+)
+/** Byte and lifecycle budgets shared by the host and SDK adapters. */
+export const PLUGIN_DOCUMENT_LIMITS = Object.freeze({ markdownBytes: 128 * 1024, cssBytes: 16 * 1024, htmlBytes: 512 * 1024, exportBytes: 1024 * 1024, images: 32, imageBytes: 256 * 1024, documents: 8 })
+function documentBytes(text: string): number {
+  let bytes = 0
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0
+    bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4
+  }
+  return bytes
+}
+function documentString(value: unknown, max: number): asserts value is string {
+  if (typeof value !== 'string') throw new PluginError('InvalidPath', 'Expected document text')
+  if (documentBytes(value) > max) throw new PluginError('QuotaExceeded', 'Document exceeds its byte limit')
+}
+/** Validates transport shape and quotas. Browser CSS parsing is performed by the host renderer. */
+export function validatePluginRenderDocumentOptions(value: unknown): PluginRenderDocumentOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PluginError('InvalidPath', 'Invalid document options')
+  const v = value as Record<string, unknown>
+  if (Object.keys(v).some(key => !['markdown', 'html', 'css', 'title', 'target', 'images'].includes(key))) throw new PluginError('InvalidPath', 'Unknown document option')
+  if ((v.markdown !== undefined) === (v.html !== undefined)) throw new PluginError('InvalidPath', 'Provide exactly one document source: markdown or html')
+  if (v.markdown !== undefined) documentString(v.markdown, PLUGIN_DOCUMENT_LIMITS.markdownBytes)
+  if (v.html !== undefined) documentString(v.html, PLUGIN_DOCUMENT_LIMITS.htmlBytes)
+  if (v.css !== undefined) documentString(v.css, PLUGIN_DOCUMENT_LIMITS.cssBytes)
+  if (v.title !== undefined) documentString(v.title, 240)
+  if (v.target !== undefined && v.target !== 'html' && v.target !== 'wechat') throw new PluginError('InvalidPath', 'Unknown document target')
+  if (v.images !== undefined) {
+    if (!Array.isArray(v.images) || v.images.length > PLUGIN_DOCUMENT_LIMITS.images) throw new PluginError('InvalidPath', 'Invalid document images')
+    for (const image of v.images) {
+      if (!image || typeof image !== 'object' || Array.isArray(image) || Object.keys(image).some(key => !['source', 'dataUrl'].includes(key))) throw new PluginError('InvalidPath', 'Invalid document image')
+      const item = image as Record<string, unknown>
+      documentString(item.source, 1024); documentString(item.dataUrl, PLUGIN_DOCUMENT_LIMITS.imageBytes)
+      if (!/^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+=*$/.test(item.dataUrl)) throw new PluginError('InvalidPath', 'Only raster image data URLs are supported')
+    }
+  }
+  return value as PluginRenderDocumentOptions
+}
+
+export function validatePluginClipboardContent(value: unknown): PluginClipboardContent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PluginError('InvalidPath', 'Invalid clipboard content')
+  const v = value as Record<string, unknown>
+  if (v.documentId !== undefined) {
+    if (Object.keys(v).some(key => key !== 'documentId')) throw new PluginError('InvalidPath', 'Document clipboard content cannot include text or HTML')
+    documentString(v.documentId, 160)
+  } else {
+    if (Object.keys(v).some(key => !['text', 'html'].includes(key))) throw new PluginError('InvalidPath', 'Unknown clipboard field')
+    documentString(v.text, PLUGIN_DOCUMENT_LIMITS.htmlBytes)
+    if (v.html !== undefined) documentString(v.html, PLUGIN_DOCUMENT_LIMITS.htmlBytes)
+  }
+  return value as PluginClipboardContent
+}
+export function validatePluginExportFileOptions(value: unknown): PluginExportFileOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PluginError('InvalidPath', 'Invalid file export')
+  const v = value as Record<string, unknown>
+  documentString(v.fileName, 160)
+  if (!v.fileName || /[\\/\x00-\x1f]/.test(v.fileName) || /^\.+$/.test(v.fileName)) throw new PluginError('InvalidPath', 'Export requires a filename without a directory')
+  if (v.documentId !== undefined) {
+    if (Object.keys(v).some(key => !['fileName', 'documentId'].includes(key))) throw new PluginError('InvalidPath', 'Document export cannot include another file payload')
+    documentString(v.documentId, 160)
+  } else {
+    if (Object.keys(v).some(key => !['fileName', 'mimeType', 'text', 'base64'].includes(key)) || (v.text !== undefined) === (v.base64 !== undefined)) throw new PluginError('InvalidPath', 'Provide exactly one file payload')
+    if (typeof v.mimeType !== 'string' || !/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(v.mimeType)) throw new PluginError('InvalidPath', 'Invalid export MIME type')
+    if (v.text !== undefined) documentString(v.text, PLUGIN_DOCUMENT_LIMITS.exportBytes)
+    if (v.base64 !== undefined) {
+      documentString(v.base64, Math.ceil(PLUGIN_DOCUMENT_LIMITS.exportBytes / 3) * 4)
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v.base64)) throw new PluginError('InvalidPath', 'Invalid base64 file')
+      const padding = v.base64.endsWith('==') ? 2 : v.base64.endsWith('=') ? 1 : 0
+      if (v.base64.length / 4 * 3 - padding > PLUGIN_DOCUMENT_LIMITS.exportBytes) throw new PluginError('QuotaExceeded', 'Export exceeds its byte limit')
+    }
+  }
+  return value as PluginExportFileOptions
+}
+
+export interface PluginExportFileResult {
+  /** Never exposes an absolute destination path. */
+  saved: boolean
+}
 
 export interface PluginContext {
   readonly plugin: {
@@ -638,6 +744,18 @@ export interface PluginContext {
     readonly error: (message: string) => void
   }
   readonly signal: PluginAbortSignal
+  readonly documents: {
+    readonly render: (options: PluginRenderDocumentOptions) => Promise<PluginRenderedDocument>
+    readonly release: (id: string) => Promise<void>
+  }
+  readonly clipboard: {
+    /** Requires clipboard.write and a host user command. HTML is sanitized; no clipboard read API. */
+    readonly write: (content: PluginClipboardContent) => Promise<void>
+  }
+  readonly files: {
+    /** Requires files.export and a host user command. Always shows a save dialog; cancellation is saved:false. */
+    readonly export: (options: PluginExportFileOptions) => Promise<PluginExportFileResult>
+  }
   readonly records: PluginRecordsApi
   readonly ai: {
     /** Uses the configured primary model; never exposes credentials or chat history. */
@@ -699,6 +817,9 @@ export interface PluginContext {
     ) => PluginDisposable
   }
   readonly editor: {
+    /** Requires editor.style. Replaces this plugin's scoped .article stylesheet across note bodies in this window. */
+    readonly setStyles: (options: { css: string }) => Promise<void>
+    readonly clearStyles: () => Promise<void>
     readonly getActiveEditor: () => Promise<ActiveEditorContext | null>
     readonly getSelection: () => Promise<EditorSelection | null>
     readonly getTextSnapshot: (options: GetEditorTextSnapshotOptions) => Promise<EditorTextSnapshot>
@@ -917,6 +1038,7 @@ export type PluginExtendedUiBlock =
   | { type: 'section'; id: string; title: string; collapsible?: boolean; defaultOpen?: boolean; blocks: readonly PluginUiBlock[] }
   | { type: 'tabs'; id: string; label: string; tabs: readonly { id: string; label: string; blocks: readonly PluginUiBlock[] }[] }
   | { type: 'toolbar'; id: string; label: string; actions: readonly PluginUiAction[] }
+  | { type: 'document-preview'; id: string; documentId: string; title: string; width?: 'mobile' | 'desktop' }
   | { type: 'markdown'; text: string }
   | { type: 'badge'; text: string; tone?: 'default' | 'secondary' | 'outline' | 'destructive' }
   | { type: 'empty'; title: string; description?: string; icon?: string }
@@ -1028,6 +1150,9 @@ function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unkn
       if (v.reorderCommand !== undefined && v.reorderLabel === undefined) fail()
       return { type: 'item-list', id: text(v.id, 160), generation: text(v.generation, 160), label: text(v.label, 160), emptyText: text(v.emptyText, 500, 0), items, actions, openCommand: optionalText(v.openCommand, 220), toggleCommand: optionalText(v.toggleCommand, 220), reorderCommand: optionalText(v.reorderCommand, 220), reorderLabel: optionalText(v.reorderLabel, 160) }
     }
+    case 'document-preview':
+      keys(v, ['type', 'id', 'documentId', 'title', 'width'])
+      return { type: 'document-preview', id: text(v.id, 160), documentId: text(v.documentId, 160), title: text(v.title, 240), width: choice(v.width, ['mobile', 'desktop']) }
     case 'markdown': keys(v, ['type', 'text']); return { type: 'markdown', text: text(v.text, 20000, 0) }
     case 'badge': keys(v, ['type', 'text', 'tone']); return { type: 'badge', text: text(v.text, 160), tone: choice(v.tone, ['default', 'secondary', 'outline', 'destructive']) }
     case 'empty': keys(v, ['type', 'title', 'description', 'icon']); return { type: 'empty', title: text(v.title, 240), description: optionalText(v.description, 2000), icon: optionalText(v.icon, 80) }

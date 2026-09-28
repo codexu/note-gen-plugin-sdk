@@ -21,7 +21,7 @@ project scaffold, build and package CLI, and an in-process test host.
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
 
-This checkout targets `@notegen/plugin-api` protocol 0.1.6. It includes revision-safe
+This checkout targets `@notegen/plugin-api` protocol 0.1.7. It includes revision-safe
 editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.
@@ -285,3 +285,9 @@ Protocol 0.1.6 adds a host-rendered Kanban block and explicit source-to-plugin d
 ## Workflow APIs in development
 
 SDK 0.1.8 / protocol 0.1.6 adds record workflows, chat drafts, AI generation, prompts and lifecycle helpers. See [usage and permissions](./WORKFLOW-APIS.md) and [maintainer integration notes](./HOST-WORKFLOW-INTEGRATION.md).
+
+## SDK 0.1.9 document capabilities
+
+Protocol 0.1.7 adds `documents.render/release`, the runtime-owned `document-preview` UI block, `clipboard.write`, `files.export` and `editor.setStyles/clearStyles`. Rendering accepts Markdown or sanitized HTML with `.article` CSS and explicit image mappings. Clipboard/file output is permission checked and user invoked; editor styles are automatically cleared with the plugin runtime. See [host contract, limits and integration](./HOST-DOCUMENT-INTEGRATION.md).
+
+See the [document publisher example](examples/document-publisher) for Markdown/HTML rendering, raw output and document-handle lifecycle.

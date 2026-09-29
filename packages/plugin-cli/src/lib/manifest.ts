@@ -1,5 +1,5 @@
 import { validatePluginResources, pluginResourcePaths, validatePluginLanguageMessages } from '@notegen/plugin-api'
-import { PLUGIN_API_VERSION, isValidPluginMenuCondition, type PluginManifestV1 } from '@notegen/plugin-api'
+import { PLUGIN_API_VERSION, isValidPluginMenuCondition, type PluginManifestV1, type PluginPermissionName } from '@notegen/plugin-api'
 import { compare as compareSemver, valid as validSemver } from 'semver'
 
 import { fail } from './diagnostics.js'
@@ -38,9 +38,10 @@ const SUPPORTED_PERMISSIONS = Object.freeze({
   'network.fetch': new Set(['network-origins']),
   'records.read': new Set(['application']),
   'records.write': new Set(['application']),
+  'chat.read': new Set(['application']),
   'chat.write': new Set(['application']),
   'ai.generate': new Set(['application']),
-} as const)
+} satisfies Record<PluginPermissionName, ReadonlySet<string>>)
 
 export interface ManifestValidationOptions {
   /** Concrete host API version. Defaults to the API package's current version. */
@@ -449,7 +450,7 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
     ? arrayValue(contributes.menus, '$.contributes.menus')
     : []
   if (menus.length > 100) fail('manifest.too-many-contributions', 'A plugin may declare at most 100 menu items', '$.contributes.menus')
-  const menuLocations = new Set(['editor/slash', 'editor/context', 'editor/selection', 'editor/toolbar', 'tab/context', 'file/context', 'mobile/writing/overflow'])
+  const menuLocations = new Set(['editor/slash', 'editor/context', 'editor/selection', 'editor/toolbar', 'editor/node-actions', 'editor/block-actions', 'tab/context', 'file/context', 'mobile/writing/overflow'])
   for (const [index, rawMenu] of menus.entries()) {
     const path = `$.contributes.menus[${index}]`
     const menu = objectValue(rawMenu, path)
@@ -486,7 +487,7 @@ function validateContributions(value: unknown, pluginId: string): ContributionVa
     viewIds.add(id)
     localizedTexts.push(validateLocalizedText(required(view, 'title', path), `${path}.title`))
     const location = stringValue(required(view, 'location', path), `${path}.location`)
-    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(location)) {
+    if (!['left-sidebar', 'right-sidebar', 'editor-tab', 'settings', 'title-bar-left', 'title-bar-center', 'title-bar-right', 'new-tab', 'document-top', 'document-bottom', 'file-panel', 'file-selection-panel', 'editor-toolbar', 'chat-input', 'chat-message-actions', 'record-list', 'record-detail', 'status-bar-panel', 'editor/selection-panel', 'editor-inline'].includes(location)) {
       fail('manifest.invalid-view', `${path}.location must be a supported view location`, `${path}.location`)
     }
     if (Object.hasOwn(view, 'order')) {

@@ -21,7 +21,7 @@ project scaffold, build and package CLI, and an in-process test host.
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
 
-This checkout targets `@notegen/plugin-api` protocol 0.1.8. It includes revision-safe
+This checkout targets `@notegen/plugin-api` protocol 0.1.9. It includes revision-safe
 editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.

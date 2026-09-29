@@ -1,10 +1,35 @@
 import { PluginError, isPluginError } from './index.js'
-import type { PluginAbortListener, PluginAbortSignal, PluginContext, PluginDisposable, PluginUiDocument, PluginViewState } from './index.js'
+import type { PluginAbortListener, PluginAbortSignal, PluginContext, PluginDisposable, PluginUiDocument, PluginViewState, WorkspaceInfo } from './index.js'
 
 export interface PluginViewRenderer {
   id: string
   render: (context: { state: PluginViewState; signal: PluginAbortSignal }) => PluginUiDocument | Promise<PluginUiDocument>
   onError?: (error: unknown) => void
+}
+
+export interface PluginWorkspaceViewRenderer {
+  id: string
+  /** Requires notes.list or notes.read when enabled. The host still filters note events by grant. */
+  watchNotes?: boolean
+  render: (context: { workspace: WorkspaceInfo; state: PluginViewState; signal: PluginAbortSignal }) => PluginUiDocument | Promise<PluginUiDocument>
+  onError?: (error: unknown) => void
+}
+
+export interface PluginContextualViewRenderer {
+  id: string
+  render: (context: { target: NonNullable<PluginViewState['target']>; state: PluginViewState; signal: PluginAbortSignal }) => PluginUiDocument | Promise<PluginUiDocument>
+  onError?: (error: unknown) => void
+}
+
+/** Render only while the host supplies an authorized target for this surface. */
+export function registerContextualView(context: PluginContext, options: PluginContextualViewRenderer): PluginDisposable & { refresh: () => Promise<void> } {
+  return registerView(context, {
+    id: options.id,
+    onError: options.onError,
+    render: async ({ state, signal }) => state.target
+      ? options.render({ target: state.target, state, signal })
+      : { blocks: [] },
+  })
 }
 
 /** Cancels obsolete renders and automatically echoes the current embedded context token. */
@@ -69,6 +94,39 @@ export function registerView(context: PluginContext, options: PluginViewRenderer
   if (context.signal.aborted) dispose()
   else void refresh()
   return { dispose, refresh }
+}
+
+/** Bind a declared view to the current workspace and optionally refresh it on note changes.
+ * The host owns the view location and permission checks; this helper owns only subscriptions.
+ */
+export function registerWorkspaceView(context: PluginContext, options: PluginWorkspaceViewRenderer): PluginDisposable & { refresh: () => Promise<void> } {
+  const view = registerView(context, {
+    id: options.id,
+    onError: options.onError,
+    render: async ({ state, signal }) => {
+      const workspace = await context.workspace.getCurrent()
+      signal.throwIfAborted()
+      return options.render({ workspace, state, signal })
+    },
+  })
+  let notes: PluginDisposable | undefined
+  try {
+    if (options.watchNotes) notes = context.notes.onDidChange(() => { void view.refresh() })
+  } catch (error) {
+    view.dispose()
+    throw error
+  }
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    notes?.dispose()
+    view.dispose()
+    context.signal.removeEventListener('abort', dispose)
+  }
+  context.signal.addEventListener('abort', dispose)
+  if (context.signal.aborted) dispose()
+  return { dispose, refresh: view.refresh }
 }
 
 /** Releases subscriptions in reverse order, including subscriptions added after disposal. */

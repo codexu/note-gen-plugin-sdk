@@ -272,7 +272,7 @@ export function createCliProgram(
     if (!options.appVersion) warnings.push('Host app version not supplied; use --app-version to check the minimum NoteGen version.')
     if (!options.apiVersion) warnings.push('Checking against this SDK protocol, not a connected NoteGen host; pass --api-version for your installed host.')
     if (Object.keys(result.manifest.permissions).length) warnings.push('Permission declarations are valid. Actual user grants must be reviewed in NoteGen.')
-    if (result.manifest.contributes.views?.some(view => ['new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'].includes(view.location))) warnings.push('Embedded views must echo getState().contextId as expectedContextId; registerView handles this automatically.')
+    if (result.manifest.contributes.views?.some(view => ['new-tab', 'document-top', 'document-bottom', 'file-panel', 'file-selection-panel', 'editor-toolbar', 'chat-input', 'chat-message-actions', 'record-list', 'record-detail', 'status-bar-panel', 'editor/selection-panel', 'editor-inline'].includes(view.location))) warnings.push('Embedded views must echo getState().contextId as expectedContextId; registerView handles this automatically.')
     const report = { ok: true, command: 'doctor', pluginId: result.manifest.id, sdkVersion: PLUGIN_CLI_VERSION, apiVersion: options.apiVersion ?? PLUGIN_API_VERSION, appCompatibilityChecked: options.appVersion !== undefined, warnings }
     if (options.json) printJson(io, report)
     else {

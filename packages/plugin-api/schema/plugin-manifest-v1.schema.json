@@ -321,6 +321,7 @@
       "properties": {
         "records.read": { "$ref": "#/$defs/applicationPermission" },
         "records.write": { "$ref": "#/$defs/applicationPermission" },
+        "chat.read": { "$ref": "#/$defs/applicationPermission" },
         "chat.write": { "$ref": "#/$defs/applicationPermission" },
         "ai.generate": { "$ref": "#/$defs/applicationPermission" },
         "clipboard.write": { "$ref": "#/$defs/applicationPermission" },
@@ -447,7 +448,7 @@
       "additionalProperties": false,
       "required": ["location", "command"],
       "properties": {
-        "location": { "enum": ["editor/slash", "editor/context", "editor/selection", "editor/toolbar", "tab/context", "file/context", "mobile/writing/overflow"] },
+        "location": { "enum": ["editor/slash", "editor/context", "editor/selection", "editor/toolbar", "editor/node-actions", "editor/block-actions", "tab/context", "file/context", "mobile/writing/overflow"] },
         "command": { "$ref": "#/$defs/namespacedId" },
         "when": { "type": "string", "minLength": 1, "maxLength": 240 },
         "group": { "type": "string", "minLength": 1, "maxLength": 80 },
@@ -463,7 +464,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/namespacedId" },
         "title": { "$ref": "#/$defs/localizedText" },
-        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab", "settings", "title-bar-left", "title-bar-center", "title-bar-right", "new-tab", "document-top", "document-bottom", "file-panel", "editor-toolbar", "chat-input", "record-list", "status-bar-panel"] },
+        "location": { "enum": ["left-sidebar", "right-sidebar", "editor-tab", "settings", "title-bar-left", "title-bar-center", "title-bar-right", "new-tab", "document-top", "document-bottom", "file-panel", "file-selection-panel", "editor-toolbar", "chat-input", "chat-message-actions", "record-list", "record-detail", "status-bar-panel", "editor/selection-panel", "editor-inline"] },
         "order": { "type": "integer", "minimum": -10000, "maximum": 10000 },
         "icon": { "type": "string", "pattern": "^[A-Za-z0-9-]+$", "maxLength": 80 }
       }

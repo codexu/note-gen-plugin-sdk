@@ -48,7 +48,7 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.8')
+  assert.equal(PLUGIN_API_VERSION, '0.1.9')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
 })
 

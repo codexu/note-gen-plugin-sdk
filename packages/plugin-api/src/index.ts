@@ -1,5 +1,5 @@
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.8' as const
+export const PLUGIN_API_VERSION = '0.1.9' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -28,6 +28,7 @@ export interface PluginPermissionDeclaration<
 export interface PluginPermissionDeclarations {
   'records.read'?: PluginPermissionDeclaration<'application'>
   'records.write'?: PluginPermissionDeclaration<'application'>
+  'chat.read'?: PluginPermissionDeclaration<'application'>
   'chat.write'?: PluginPermissionDeclaration<'application'>
   'ai.generate'?: PluginPermissionDeclaration<'application'>
   'clipboard.write'?: PluginPermissionDeclaration<'application'>
@@ -131,7 +132,7 @@ export type PluginTitleBarLocation = 'title-bar-left' | 'title-bar-center' | 'ti
 
 /** Embedded surfaces follow the visible host context; they never open editor tabs.
  * The desktop host presents status-bar-panel content in a right-side drawer. */
-export type PluginEmbeddedViewLocation = 'new-tab' | 'document-top' | 'document-bottom' | 'file-panel' | 'editor-toolbar' | 'chat-input' | 'record-list' | 'status-bar-panel'
+export type PluginEmbeddedViewLocation = 'new-tab' | 'document-top' | 'document-bottom' | 'file-panel' | 'file-selection-panel' | 'editor-toolbar' | 'chat-input' | 'chat-message-actions' | 'record-list' | 'record-detail' | 'status-bar-panel' | 'editor/selection-panel' | 'editor-inline'
 
 export interface PluginViewContribution {
   id: string
@@ -146,6 +147,8 @@ export type PluginMenuLocation =
   | 'editor/context'
   | 'editor/selection'
   | 'editor/toolbar'
+  | 'editor/node-actions'
+  | 'editor/block-actions'
   | 'tab/context'
   | 'file/context'
   | 'mobile/writing/overflow'
@@ -267,6 +270,8 @@ export interface NoteEntry {
   path: string
   name: string
   size: number
+  /** Saved file modification time in Unix milliseconds, when available. */
+  modifiedAt?: number
 }
 
 export interface ListNotesOptions {
@@ -294,6 +299,21 @@ export interface SearchNotesResult {
   matches: readonly { path: string; revision: number; line: number; preview: string }[]
   /** True when the scan or result quota was reached. Searches saved Markdown only. */
   truncated: boolean
+}
+
+export interface SearchRelatedNotesOptions {
+  query: string
+  /** Workspace-relative folder; defaults to the authorized workspace root. */
+  folder?: string
+  /** Maximum number of related notes, from 1 to 30. */
+  limit?: number
+  /** Workspace-relative notes to omit before ranking, up to 200 paths. */
+  excludePaths?: readonly string[]
+}
+
+export interface SearchRelatedNotesResult {
+  /** Ranked, indexed Markdown notes. Results may combine semantic and keyword relevance. */
+  matches: readonly { path: string; score: number; preview: string }[]
 }
 
 export interface WriteNoteOptions {
@@ -353,6 +373,16 @@ export interface EditorSelection {
   offsetsAvailable: boolean
   empty: boolean
   text: string
+}
+
+/** Safe semantic summary of a short-lived desktop visual-editor target. */
+export interface PluginEditorTargetSnapshot {
+  nodeKind: PluginMenuContext['nodeKind']
+  nodeType: string
+  text: string
+  attributes: Readonly<Record<string, string | number | boolean | null>>
+  children: readonly { type: string; text: string }[]
+  truncated: boolean
 }
 
 export interface EditorTextSnapshot {
@@ -445,6 +475,12 @@ export interface PluginViewState {
   visible: boolean
   /** Opaque embedded-surface token. Changes when the page/document changes. */
   contextId?: string
+  /** Host-owned, permission-filtered context for the currently mounted surface. */
+  target?:
+    | { kind: 'file-selection'; entries: readonly { path: string; name: string; kind: 'file' | 'folder' }[] }
+    | { kind: 'record'; id: number; recordType: 'scan' | 'text' | 'image' | 'link' | 'file' | 'recording' | 'todo' }
+    | { kind: 'chat-message'; id: number; role: 'user' | 'system'; messageType: string }
+    | { kind: 'editor-selection' | 'editor-caret' }
 }
 
 export interface WorkspaceChangeEvent {
@@ -623,7 +659,7 @@ export interface PluginChatDraftOptions {
   overwrite?: boolean
 }
 
-export type PluginCapability = 'embedded-views' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'clipboard-write' | 'file-export' | 'editor-styles' | 'terminal'
+export type PluginCapability = 'embedded-views' | 'workspace-views' | 'contextual-views' | 'editor-actions' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'clipboard-write' | 'file-export' | 'editor-styles' | 'terminal' | 'related-notes-search'
 
 export type PluginPromptOptions =
   | { type: 'confirm'; title: string; description?: string; confirmLabel?: string }
@@ -746,6 +782,10 @@ export interface PluginContext {
     readonly error: (message: string) => void
   }
   readonly signal: PluginAbortSignal
+  /** Presentation hint only. Every privileged operation checks authorization again. */
+  readonly permissions: {
+    readonly query: (permission: PluginPermissionName, path?: string) => Promise<{ declared: boolean; granted: boolean }>
+  }
   readonly documents: {
     readonly render: (options: PluginRenderDocumentOptions) => Promise<PluginRenderedDocument>
     readonly release: (id: string) => Promise<void>
@@ -803,6 +843,10 @@ export interface PluginContext {
     readonly list: (options?: ListNotesOptions) => Promise<ListNotesResult>
     /** Requires both notes.list and notes.read within the granted folder. */
     readonly search: (options: SearchNotesOptions) => Promise<SearchNotesResult>
+    /** Main window only. Requires notes.list and notes.read plus the
+     * related-notes-search capability. Searches indexed Markdown within the
+     * granted folder and may use the host's embedding/reranking services. */
+    readonly searchRelated: (options: SearchRelatedNotesOptions) => Promise<SearchRelatedNotesResult>
     /** Explicit user navigation only: durably saves and closes main-window editors
      * for this path, returning the saved snapshot. Requires notes.read/write/open.
      * Separate windows or AI generation return EditorBusy. Does not reserve the file;
@@ -824,6 +868,8 @@ export interface PluginContext {
     readonly clearStyles: () => Promise<void>
     readonly getActiveEditor: () => Promise<ActiveEditorContext | null>
     readonly getSelection: () => Promise<EditorSelection | null>
+    /** Requires editor.read. Tokens are supplied to user-invoked editor menu commands. */
+    readonly getTarget: (token: string) => Promise<PluginEditorTargetSnapshot>
     readonly getTextSnapshot: (options: GetEditorTextSnapshotOptions) => Promise<EditorTextSnapshot>
     readonly applyEdit: (options: ApplyEditorEditOptions) => Promise<ApplyEditorEditResult>
     /** Atomic, non-overlapping Markdown edits. Currently available in source mode. */
@@ -950,11 +996,12 @@ export interface PluginMenuContext {
   selection?: boolean
   readOnly?: boolean
   codeBlock?: boolean
+  nodeKind?: 'image' | 'table' | 'codeBlock' | 'link' | 'math' | 'paragraph' | 'heading' | 'list' | 'other'
   resourceKind?: 'file' | 'folder' | 'root'
   resourceExt?: string
 }
 const menuBooleanKeys = new Set(['selection', 'readOnly', 'codeBlock'])
-const menuStringKeys = new Set(['editor', 'resourceKind', 'resourceExt'])
+const menuStringKeys = new Set(['editor', 'resourceKind', 'resourceExt', 'nodeKind'])
 function parseMenuAtom(atom: string): { key: keyof PluginMenuContext; operator: string; value: string | boolean } | null {
   const boolean = /^(!)?(selection|readOnly|codeBlock)$/.exec(atom.trim())
   if (boolean) return { key: boolean[2] as keyof PluginMenuContext, operator: '==', value: !boolean[1] }
@@ -1003,7 +1050,10 @@ export interface PluginItemListBlock {
   generation: string
   label: string
   emptyText: string
-  items: readonly { id: string; label: string; description?: string; metadata?: string; icon?: string; checked?: boolean; disabled?: boolean }[]
+  items: readonly { id: string; label: string; description?: string; descriptionHighlight?: string; metadata?: string; icon?: string; checked?: boolean; disabled?: boolean }[]
+  compact?: boolean
+  descriptionLines?: 1 | 2 | 3
+  inlineActions?: boolean
   openCommand?: string
   toggleCommand?: string
   reorderCommand?: string
@@ -1145,13 +1195,15 @@ function parsePluginUiExtensionValue(value: unknown, parseChildren: (value: unkn
         openCardCommand: text(v.openCardCommand, 220), addCardCommand: text(v.addCardCommand, 220), editColumnCommand: text(v.editColumnCommand, 220), moveCardCommand: text(v.moveCardCommand, 220), reorderColumnsCommand: text(v.reorderColumnsCommand, 220), openNoteCommand: optionalText(v.openNoteCommand, 220), disabled: boolean(v.disabled) }
     }
     case 'item-list': {
-      keys(v, ['type', 'id', 'generation', 'label', 'emptyText', 'items', 'openCommand', 'toggleCommand', 'reorderCommand', 'reorderLabel', 'actions'])
-      const items = array(v.items, 100).map(value => { const item = record(value); keys(item, ['id', 'label', 'description', 'metadata', 'icon', 'checked', 'disabled']); return { id: text(item.id, 1024), label: text(item.label), description: optionalText(item.description, 2000), metadata: optionalText(item.metadata, 1024), icon: optionalText(item.icon, 80), checked: boolean(item.checked), disabled: boolean(item.disabled) } })
+      keys(v, ['type', 'id', 'generation', 'label', 'emptyText', 'items', 'openCommand', 'toggleCommand', 'reorderCommand', 'reorderLabel', 'actions', 'compact', 'descriptionLines', 'inlineActions'])
+      const items = array(v.items, 100).map(value => { const item = record(value); keys(item, ['id', 'label', 'description', 'descriptionHighlight', 'metadata', 'icon', 'checked', 'disabled']); return { id: text(item.id, 1024), label: text(item.label), description: optionalText(item.description, 2000), descriptionHighlight: optionalText(item.descriptionHighlight, 160), metadata: optionalText(item.metadata, 1024), icon: optionalText(item.icon, 80), checked: boolean(item.checked), disabled: boolean(item.disabled) } })
       unique(items)
       const actions = v.actions === undefined ? undefined : array(v.actions, 20).map(action)
       if (actions) unique(actions)
       if (v.reorderCommand !== undefined && v.reorderLabel === undefined) fail()
-      return { type: 'item-list', id: text(v.id, 160), generation: text(v.generation, 160), label: text(v.label, 160), emptyText: text(v.emptyText, 500, 0), items, actions, openCommand: optionalText(v.openCommand, 220), toggleCommand: optionalText(v.toggleCommand, 220), reorderCommand: optionalText(v.reorderCommand, 220), reorderLabel: optionalText(v.reorderLabel, 160) }
+      if (v.descriptionLines !== undefined && v.descriptionLines !== 1 && v.descriptionLines !== 2 && v.descriptionLines !== 3) fail()
+      if (v.inlineActions === true && actions?.length !== 1) fail()
+      return { type: 'item-list', id: text(v.id, 160), generation: text(v.generation, 160), label: text(v.label, 160), emptyText: text(v.emptyText, 500, 0), items, actions, compact: boolean(v.compact), descriptionLines: v.descriptionLines as 1 | 2 | 3 | undefined, inlineActions: boolean(v.inlineActions), openCommand: optionalText(v.openCommand, 220), toggleCommand: optionalText(v.toggleCommand, 220), reorderCommand: optionalText(v.reorderCommand, 220), reorderLabel: optionalText(v.reorderLabel, 160) }
     }
     case 'document-preview':
       keys(v, ['type', 'id', 'documentId', 'title', 'width'])
@@ -1208,6 +1260,7 @@ export interface PluginEmbeddedViewInit {
   background: string
   foreground: string
   theme?: PluginEmbeddedViewTheme
+  settings?: Readonly<Record<string, PluginSettingValue>>
 }
 /** Resolved host colors and typography for isolated embedded views. The host
  * sends the same payload in `host.theme` when its appearance changes. */
@@ -1366,8 +1419,11 @@ export type PluginPreviewRequest =
   | { id: number; method: 'readAsset'; path: string }
 export type PluginPreviewResponse = { id: number; result: Uint8Array } | { id: number; error: string }
 
-export { registerView, createDisposables } from './view-helper.js'
-export type { PluginViewRenderer } from './view-helper.js'
+export { registerView, registerWorkspaceView, registerContextualView, createDisposables } from './view-helper.js'
+export type { PluginViewRenderer, PluginWorkspaceViewRenderer, PluginContextualViewRenderer } from './view-helper.js'
+export { resolveMarkdownAttachmentPath, collectMarkdownImageSources, unresolvedMarkdownImageSources } from './markdown-attachments.js'
+export { acceptEmbeddedFrameInit, createEmbeddedFrameSession } from './embedded-frame.js'
+export type { PluginEmbeddedFramePort, PluginEmbeddedFrameSession } from './embedded-frame.js'
 
 export { readNoteProperties, updateNoteProperties, queryNoteProperties } from './note-properties.js'
 export type { PluginNoteProperties } from './note-properties.js'

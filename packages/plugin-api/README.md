@@ -30,6 +30,59 @@ The package contains manifest, permission, contribution, lifecycle, host-context
 and stable error types. The frontmatter helpers depend on `yaml`; bundle value imports into the plugin entry.
 The public types do not require DOM types.
 
+## Protocol 0.1.9: contextual surfaces
+
+`context.plugin.apiVersion` is the host protocol version; the npm package version
+is separate. `context.plugin.capabilities` describes available host features,
+while `context.permissions.query('notes.list', path)` reports the current grant
+for UI decisions. Every operation is checked again by the host.
+
+`context.notes.searchRelated({ query, folder, limit })` returns ranked Markdown
+notes from NoteGen's knowledge index. Check the `related-notes-search`
+capability before calling it. It requires `notes.list` for the requested folder
+and `notes.read` for each result; only authorized article sources enter the
+retrieval pool. Pass `excludePaths` to remove workspace-relative notes before
+ranking, such as the current note and literal hits. The host may use its configured embedding and reranking
+providers, with local keyword retrieval as a fallback. Results contain a
+workspace-relative path, relevance score, and bounded excerpt. Only indexed,
+saved notes participate, so use `notes.search` for exhaustive literal matches.
+
+New views include `file-selection-panel`, `chat-message-actions`,
+`record-detail`, `editor/selection-panel`, and `editor-inline`. Use
+`registerContextualView` to receive a typed `state.target` and the current
+`contextId`. File paths are workspace relative and filtered by `notes.list`;
+record metadata requires `records.read`, and message metadata requires the
+new application-scoped `chat.read` permission. A missing target means the
+plugin has no authorization for that target. The host never supplies its DOM
+or React children. Selection and caret targets identify the active surface;
+readable editor content still requires `editor.read`.
+
+```ts
+import { registerContextualView } from '@notegen/plugin-api'
+
+registerContextualView(context, {
+  id: 'com.example.files.selection',
+  render: ({ target }) => ({
+    blocks: target.kind === 'file-selection'
+      ? [{ type: 'text', text: `${target.entries.length} accessible items` }]
+      : [],
+  }),
+})
+```
+
+`editor/node-actions` and `editor/block-actions` add commands to the host's
+existing editor menus. `when: "nodeKind == image"` and similar conditions
+filter actions. These menus run in the desktop visual editor. Source mode can
+use plugin commands from the command palette; mobile keeps its
+`mobile/writing/overflow` menu. Menu commands are rejected if the document
+or selection changes while a plugin is activating. A user-invoked editor menu
+command receives an opaque `targetToken`. With `editor.read`, call
+`context.editor.getTarget(targetToken)` to read a bounded semantic snapshot:
+node type, safe attributes, text and immediate child summaries. Tokens expire
+and become stale when the active editor, document or selection changes.
+The mock host can register a matching snapshot with `setEditorTarget(token,
+snapshot)` before invoking the command.
+
 Desktop plugins may bundle a `resources.embeddedViews` script and stylesheet,
 then render an `{ type: 'embedded-view', id: 'shell' }` block whose id matches
 that resource. The isolated frame receives a MessagePort; terminal plugins
@@ -47,6 +100,17 @@ the NoteGen host owns only PTY sessions, permission checks, and cleanup. The
 shell starts in the current workspace with the user's operating-system access.
 The block is unavailable on mobile and web. Set `minAppVersion` to the first
 compatible NoteGen release before publishing the plugin.
+
+`acceptEmbeddedFrameInit(event, token, window.parent)` verifies the private
+init message. `createEmbeddedFrameSession(port, { onTheme, onSettings,
+onEvent })` handles request IDs, replies, cancellation and port cleanup; call
+`session.ready()` after the frame UI is initialized and `session.dispose()`
+when it closes. The terminal plugin uses this helper.
+
+For Markdown output, `collectMarkdownImageSources`,
+`resolveMarkdownAttachmentPath` and `unresolvedMarkdownImageSources` handle
+relative image references and renderer warnings. Attachment bytes still
+require `attachments.read` and a separate explicit mapping in `documents.render`.
 
 Values that cross the runtime boundary use `PluginJsonValue`. Command arguments
 and results, storage values, and declarative UI action arguments therefore accept
@@ -75,6 +139,9 @@ Forms submit `{ formId, values }` to a declared command; its result may contain
 currently require source mode. Batch edits cannot overlap and form one undo step.
 `notes.search` searches saved Markdown within both list and read grants (up to
 200 files, 16 MiB scanned, 100 matching lines); inspect `truncated`.
+`notes.searchRelated` searches authorized knowledge-indexed Markdown with
+semantic and keyword relevance when `related-notes-search` is available; it
+returns up to 30 ranked note paths and bounded excerpts.
 `attachments.read/create` require separate grants, accept PNG/JPEG/GIF/WebP,
 PDF/TXT/CSV, and transport standard Base64 up to 1 MiB decoded. Creation never
 overwrites an existing file. There is no attachment delete, arbitrary-file API,
@@ -122,6 +189,40 @@ does not simulate package installation or versioned storage.
 ## Active document paths
 
 `editor.getActiveEditor()` and active-editor events may include `path`, the workspace-relative Markdown path. It is protected by `editor.read` and never contains an absolute filesystem path. Older hosts and non-workspace documents may omit it; plugins must handle absence without treating the opaque document ID as a path.
+
+## Workspace, note-file, and view entry points
+
+Declare a view in `contributes.views`, then register its renderer with
+`registerWorkspaceView`. The helper supplies the current workspace ID and name,
+cancels superseded renders, keeps embedded-view context tokens current, and can
+refresh when an authorized note changes. `watchNotes` requires `notes.list` or
+`notes.read`; it does not expand either permission. For example:
+
+```ts
+import { registerWorkspaceView, type PluginActivate } from '@notegen/plugin-api'
+
+export const activate: PluginActivate = context => {
+  registerWorkspaceView(context, {
+    id: `${context.plugin.id}.notes`,
+    watchNotes: true,
+    render: async ({ workspace, signal }) => {
+      const page = await context.notes.list({ limit: 50 })
+      signal.throwIfAborted()
+      return { blocks: [
+        { type: 'heading', text: workspace.name },
+        { type: 'text', text: page.entries.map(note => note.name).join('\n') },
+      ] }
+    },
+  })
+}
+```
+
+`notes.list` returns workspace-relative Markdown paths, byte sizes, and, on
+supporting hosts, an optional `modifiedAt` Unix timestamp in milliseconds.
+Continue through `nextCursor` when `truncated` is true. Reading content still
+requires `notes.read`; unrelated attachments require their own permission.
+Workspace changes stop the old plugin runtime, so a new activation should read
+`workspace.getCurrent()` again rather than retain an old workspace ID.
 
 ## Opening existing notes only
 
@@ -179,7 +280,10 @@ Composable blocks:
 - `item-list`: stable IDs, generation, click action, optional checkbox action,
   drag and keyboard reordering, context actions and a touch-accessible overflow.
   Items may supply `metadata` (up to 1024 characters) for a separate information
-  line below the description, such as a workspace-relative file path.
+  line below the description, such as a workspace-relative file path. Set
+  `compact` for dense rows, `descriptionLines` to clamp descriptions to 1–3
+  lines, and `descriptionHighlight` on an item to emphasize matching text.
+  `inlineActions` displays a single action beside each item title.
 - `markdown`: formatted text with raw HTML, links and image loading disabled.
 - `badge`, `empty`, `loading`: standard theme-aware feedback.
 - Form fields additionally support `search`, ISO `date`, and searchable

@@ -13,6 +13,8 @@ import type {
   ApplyEditorEditsOptions,
   SetEditorSelectionOptions,
   SearchNotesOptions,
+  SearchRelatedNotesOptions,
+  SearchRelatedNotesResult,
   PluginViewState,
   PluginRecord,
   PluginAiRequest,
@@ -23,6 +25,7 @@ import type {
   EditorActiveChangeEvent,
   EditorContentChangeEvent,
   EditorSelection,
+  PluginEditorTargetSnapshot,
   EditorTextSnapshot,
   GetEditorTextSnapshotOptions,
   ListNotesOptions,
@@ -61,7 +64,7 @@ import type {
   WriteNoteResult,
 } from '@notegen/plugin-api'
 
-const EMBEDDED_LOCATIONS = new Set(['new-tab', 'document-top', 'document-bottom', 'file-panel', 'editor-toolbar', 'chat-input', 'record-list', 'status-bar-panel'])
+const EMBEDDED_LOCATIONS = new Set(['new-tab', 'document-top', 'document-bottom', 'file-panel', 'file-selection-panel', 'editor-toolbar', 'chat-input', 'chat-message-actions', 'record-list', 'record-detail', 'status-bar-panel', 'editor/selection-panel', 'editor-inline'])
 
 const STORAGE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\s\S])/
 const DAY_START_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$(?![\s\S])/
@@ -116,7 +119,9 @@ export type PluginTestCallName =
   | 'commands.handle'
   | 'commands.execute'
   | 'workspace.getCurrent'
+  | 'permissions.query'
   | 'workspace.onDidChange'
+  | 'editor.getTarget'
   | 'calendar.resolveDay'
   | 'notes.read'
   | 'documents.render' | 'documents.release' | 'clipboard.write' | 'files.export' | 'editor.setStyles' | 'editor.clearStyles'
@@ -127,6 +132,7 @@ export type PluginTestCallName =
   | 'notes.openOrCreate'
   | 'notes.list'
   | 'notes.search'
+  | 'notes.searchRelated'
   | 'notes.prepareForWrite'
   | 'notes.write'
   | 'notes.move'
@@ -175,6 +181,7 @@ export interface PluginTestNote {
   readonly content: string
   readonly id?: string
   readonly revision?: number
+  readonly modifiedAt?: number
 }
 
 export interface PluginTestEditorState {
@@ -207,6 +214,8 @@ export interface PluginTestHostOptions {
   /** Existing empty folders that cannot be inferred from seeded notes. */
   readonly folders?: readonly string[]
   readonly notes?: readonly PluginTestNote[]
+  /** Supply ranked RAG fixtures; the test host otherwise uses deterministic text matching. */
+  readonly searchRelated?: (options: SearchRelatedNotesOptions) => Promise<SearchRelatedNotesResult>
   readonly records?: readonly PluginRecord[]
   readonly recordTags?: readonly { id: number; name: string }[]
   /** Notes open in any tab, pane, or separate editor window. */
@@ -248,7 +257,7 @@ export interface PluginTestHost {
   readonly permissions: Readonly<Partial<Record<PluginPermissionName, PluginTestPermissionGrant>>>
   readonly views: Readonly<Record<string, PluginUiDocument>>
   readonly dialog: (PluginDialogOptions & { id: string }) | null
-  setEmbeddedViewContext(id: string, contextId: string | null): Promise<void>
+  setEmbeddedViewContext(id: string, contextId: string | null, target?: PluginViewState['target']): Promise<void>
   simulateFormChange(surfaceId: string, formId: string): NonNullable<PluginUiDocument['expectedForm']>
 
   activate(module: PluginModule): Promise<void>
@@ -264,6 +273,7 @@ export interface PluginTestHost {
     options?: SetActiveEditorOptions,
   ): Promise<void>
   setEditorSelection(selection: EditorSelection | null): void
+  setEditorTarget(token: string, snapshot: PluginEditorTargetSnapshot): void
   setOpenNotePaths(paths: readonly string[]): void
   emitEditorContentChange(
     event: EditorContentChangeEvent,
@@ -373,6 +383,7 @@ class MemoryPluginTestHost implements PluginTestHost {
   private readonly noteListeners = new Set<NoteListener>()
 
   private readonly noteStore = new Map<string, NoteSnapshot>()
+  private readonly editorTargets = new Map<string, PluginEditorTargetSnapshot>()
   private readonly attachmentStore = new Map<string, string>()
   private readonly knownFolders = new Set<string>([''])
   private readonly deviceStorage = new Map<string, PluginJsonValue>()
@@ -390,6 +401,7 @@ class MemoryPluginTestHost implements PluginTestHost {
   private readonly renderedDocuments = new Map<string, PluginRenderedDocument>()
   private readonly documentRenderer?: PluginTestHostOptions['renderDocument']
   private readonly fileExporter?: PluginTestHostOptions['exportFile']
+  private readonly relatedSearch?: PluginTestHostOptions['searchRelated']
   private clipboardContent: PluginClipboardContent | null = null
   private editorCss = ''
   private userCommandDepth = 0
@@ -402,6 +414,7 @@ class MemoryPluginTestHost implements PluginTestHost {
   private readonly aiListeners = new Set<(event: PluginAiStreamEvent) => void | Promise<void>>()
   private readonly aiGenerate?: PluginTestHostOptions['aiGenerate']
   private readonly embeddedContexts = new Map<string, string>()
+  private readonly embeddedTargets = new Map<string, PluginViewState['target']>()
   private readonly viewStates = new Map<string, PluginUiDocument>()
   private readonly hiddenTitleBarViews = new Set<string>()
   private readonly visibleViews = new Map<PluginViewState['location'], string>()
@@ -428,6 +441,7 @@ class MemoryPluginTestHost implements PluginTestHost {
     })
     this.now = options.now ?? (() => new Date(0))
     this.messages = options.messages ?? {}
+    this.relatedSearch = options.searchRelated
     this.networkFetch = options.networkFetch
     this.surface = options.surface ?? 'main'
     this.setOpenNotePaths(options.openNotePaths ?? [])
@@ -468,6 +482,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         path,
         revision: note.revision ?? contentRevision(note.content),
         content: note.content,
+        ...(note.modifiedAt === undefined ? {} : { modifiedAt: note.modifiedAt }),
       })
       this.rememberParentFolders(path)
     }
@@ -658,6 +673,10 @@ class MemoryPluginTestHost implements PluginTestHost {
       )
     }
     this.permissionGrants.set(permission, normalizePermissionGrant(grant, permission))
+    for (const id of this.embeddedContexts.keys()) {
+      const state = this.getViewState(id)
+      for (const listener of this.viewListeners) void Promise.resolve().then(() => listener(state)).catch(() => undefined)
+    }
   }
 
   async setSetting(key: string, value: PluginSettingValue): Promise<void> {
@@ -698,6 +717,7 @@ class MemoryPluginTestHost implements PluginTestHost {
     }
 
     this.editor = next
+    this.editorTargets.clear()
     this.editorSelection = nextSelection
     this.editorSnapshot = this.createInitialEditorSnapshot(
       this.editor,
@@ -718,9 +738,14 @@ class MemoryPluginTestHost implements PluginTestHost {
   }
 
   setEditorSelection(selection: EditorSelection | null): void {
+    this.editorTargets.clear()
     const nextSelection = cloneSelection(selection)
     assertSelectionMatchesEditor(nextSelection, this.editor)
     this.editorSelection = nextSelection
+  }
+
+  setEditorTarget(token: string, snapshot: PluginEditorTargetSnapshot): void {
+    this.editorTargets.set(token, structuredClone(snapshot))
   }
 
   async emitEditorContentChange(
@@ -746,6 +771,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         },
       )
     }
+    this.editorTargets.clear()
 
     this.editor = {
       ...this.editor,
@@ -796,7 +822,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         id: this.manifest.id,
         version: this.manifest.version,
         apiVersion: PLUGIN_API_VERSION,
-        capabilities: this.surface === 'main' ? ['embedded-views', 'records', 'chat-draft', 'ai-generation', 'ui-prompts', 'document-rendering', 'document-preview', 'clipboard-write', 'file-export', 'editor-styles'] as const : ['document-rendering', 'clipboard-write', 'file-export', 'editor-styles'] as const,
+        capabilities: this.surface === 'main' ? ['embedded-views', 'workspace-views', 'contextual-views', 'editor-actions', 'records', 'chat-draft', 'ai-generation', 'ui-prompts', 'document-rendering', 'document-preview', 'clipboard-write', 'file-export', 'editor-styles', 'related-notes-search'] as const : ['document-rendering', 'clipboard-write', 'file-export', 'editor-styles'] as const,
       }),
       log: Object.freeze({
         info: (message: string) => this.record('log.info', [String(message).slice(0, 1000)]),
@@ -804,6 +830,10 @@ class MemoryPluginTestHost implements PluginTestHost {
         error: (message: string) => this.record('log.error', [String(message).slice(0, 1000)]),
       }),
       signal: this.abortSignal,
+      permissions: Object.freeze({ query: async (permission, path) => {
+        this.assertUsable(); this.record('permissions.query', [permission, path])
+        return { declared: hasOwn(this.manifest.permissions, permission), granted: this.hasPermission(permission, path) }
+      } }),
       documents: {
         render: async options => {
           this.assertUsable(); this.record('documents.render', [options])
@@ -945,6 +975,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         openOrCreate: async (options) => this.openOrCreateNote(options),
         list: async (options) => this.listNotes(options),
         search: async (options) => this.searchNotes(options),
+        searchRelated: async (options) => this.searchRelatedNotes(options),
         prepareForWrite: async (options) => {
           this.record('notes.prepareForWrite', [options])
           this.assertUsable()
@@ -985,6 +1016,14 @@ class MemoryPluginTestHost implements PluginTestHost {
           this.assertUsable()
           this.assertPermission('editor.read')
           return cloneSelection(this.editorSelection)
+        },
+        getTarget: async token => {
+          this.record('editor.getTarget', [token])
+          this.assertUsable()
+          this.assertPermission('editor.read')
+          const target = this.editorTargets.get(token)
+          if (!target) throw new PluginError('NotFound', 'Editor target is unavailable')
+          return structuredClone(target)
         },
         getTextSnapshot: async (options) => this.getTextSnapshot(options),
         applyEdit: async (options) => this.applyEditorEdit(options),
@@ -1393,6 +1432,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         path: note.path,
         name: note.path.slice(note.path.lastIndexOf('/') + 1),
         size: utf8Length(note.content),
+        ...(note.modifiedAt === undefined ? {} : { modifiedAt: note.modifiedAt }),
       })),
       truncated,
       ...(truncated ? { nextCursor: JSON.stringify({ workspace: this.workspaceInfo.id, folder, recursive: options.recursive === true, after: page[page.length - 1].path }) } : {}),
@@ -1504,12 +1544,15 @@ class MemoryPluginTestHost implements PluginTestHost {
   }
 
   /** Simulate mounting, switching or unmounting an embedded host surface. */
-  async setEmbeddedViewContext(id: string, contextId: string | null): Promise<void> {
+  async setEmbeddedViewContext(id: string, contextId: string | null, target?: PluginViewState['target']): Promise<void> {
     const previous = this.getViewState(id)
     if (!EMBEDDED_LOCATIONS.has(previous.location)) throw new PluginError('InvalidPath', 'Not an embedded view')
     if (contextId !== null && (!contextId || contextId.length > 160)) throw new PluginError('InvalidPath', 'Invalid context ID')
-    if (contextId === null) this.embeddedContexts.delete(id)
-    else this.embeddedContexts.set(id, contextId)
+    if (contextId === null) { this.embeddedContexts.delete(id); this.embeddedTargets.delete(id) }
+    else {
+      this.embeddedContexts.set(id, contextId)
+      this.embeddedTargets.set(id, target)
+    }
     this.viewStates.delete(id)
     this.syncFormSnapshots(id, { blocks: [] })
     const state = this.getViewState(id)
@@ -1523,7 +1566,14 @@ class MemoryPluginTestHost implements PluginTestHost {
     if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Views require the main window')
     const view = this.manifest.contributes.views?.find((entry) => entry.id === id)
     if (!view) throw new PluginError('PermissionDenied', 'View is not declared')
-    if (EMBEDDED_LOCATIONS.has(view.location)) return { id, location: view.location, visible: this.embeddedContexts.has(id) && !this.hiddenTitleBarViews.has(id), ...(this.embeddedContexts.has(id) ? { contextId: this.embeddedContexts.get(id)! } : {}) }
+    if (EMBEDDED_LOCATIONS.has(view.location)) {
+      const target = this.embeddedTargets.get(id)
+      const authorized = target?.kind === 'file-selection'
+        ? { ...target, entries: target.entries.filter(entry => this.hasPermission('notes.list', entry.path)) }
+        : target?.kind === 'record' && !this.hasPermission('records.read') ? undefined
+          : target?.kind === 'chat-message' && !this.hasPermission('chat.read') ? undefined : target
+      return { id, location: view.location, visible: this.embeddedContexts.has(id) && !this.hiddenTitleBarViews.has(id), ...(this.embeddedContexts.has(id) ? { contextId: this.embeddedContexts.get(id)!, ...(authorized ? { target: authorized } : {}) } : {}) }
+    }
     return { id, location: view.location, visible: view.location === 'settings' ? this.visibleViews.has('settings') : view.location.startsWith('title-bar-') ? !this.hiddenTitleBarViews.has(id) : this.visibleViews.get(view.location) === id }
   }
 
@@ -1596,6 +1646,47 @@ class MemoryPluginTestHost implements PluginTestHost {
       }
     }
     return { matches, truncated }
+  }
+
+  private async searchRelatedNotes(options: SearchRelatedNotesOptions): Promise<SearchRelatedNotesResult> {
+    this.record('notes.searchRelated', [options])
+    this.assertUsable()
+    if (this.surface !== 'main') throw new PluginError('UnavailableOnPlatform', 'Related search requires the main window')
+    const { query, limit = 15 } = options
+    if (typeof query !== 'string' || !query.trim() || query.length > 500 || !Number.isSafeInteger(limit) || limit < 1 || limit > 30) {
+      throw new PluginError('InvalidPath', 'Invalid related search options')
+    }
+    if (options.folder !== undefined && (typeof options.folder !== 'string' || options.folder.startsWith('/') || /^[A-Za-z]:[\\/]/.test(options.folder))) {
+      throw new PluginError('InvalidPath', 'Expected a workspace-relative folder')
+    }
+    const folder = normalizeGrantPath(options.folder ?? '')
+    if (folder) assertNotePath(`${folder}/__plugin_search__.md`)
+    if (options.excludePaths !== undefined && (!Array.isArray(options.excludePaths) || options.excludePaths.length > 200)) {
+      throw new PluginError('InvalidPath', 'Expected at most 200 excluded note paths')
+    }
+    const excluded = new Set((options.excludePaths ?? []).map(path => assertNotePath(path)))
+    this.assertPermission('notes.list', folder)
+    this.assertPermission('notes.read')
+    if (!this.knownFolders.has(folder)) throw new PluginError('NotFound', `Workspace folder "${folder}" does not exist`, { folder })
+    const seeded = this.relatedSearch
+      ? (await this.relatedSearch(options)).matches
+      : [...this.noteStore.values()].flatMap(note => {
+        const position = note.content.toLocaleLowerCase().indexOf(query.toLocaleLowerCase())
+        return position < 0 ? [] : [{ path: note.path, score: 1, preview: note.content.slice(Math.max(0, position - 80), position + query.length + 180) }]
+      })
+    const matches: SearchRelatedNotesResult['matches'][number][] = []
+    for (const candidate of seeded) {
+      let path: string
+      try { path = assertNotePath(candidate.path) } catch { continue }
+      if (excluded.has(path) || !pathIsWithin(path, folder, 'workspace-folder') || !this.hasPermission('notes.read', path) || !this.noteStore.has(path)) continue
+      if (typeof candidate.score !== 'number' || !Number.isFinite(candidate.score) || typeof candidate.preview !== 'string') continue
+      matches.push({ path, score: Math.max(0, Math.min(1, candidate.score)), preview: candidate.preview.slice(0, 500) })
+      if (matches.length >= limit) break
+    }
+    this.assertUsable()
+    this.assertPermission('notes.list', folder)
+    for (const match of matches) this.assertPermission('notes.read', match.path)
+    return { matches }
   }
 
   private sourceSnapshot(options: { editorId: string; expectedRevision: number }) {
@@ -2046,6 +2137,8 @@ class MemoryPluginTestHost implements PluginTestHost {
     this.hiddenTitleBarViews.clear()
     this.viewStates.clear()
     this.embeddedContexts.clear()
+    this.embeddedTargets.clear()
+    this.editorTargets.clear()
     this.dialogState = null
     for (const pending of this.pendingStatusUpdates.values()) {
       if (pending.timer !== null) clearTimeout(pending.timer)

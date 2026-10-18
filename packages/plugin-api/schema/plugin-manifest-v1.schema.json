@@ -219,6 +219,59 @@
           },
           "maxItems": 30
         },
+        "codeBlockRenderers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "script": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240,
+                "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[\\\\:])[^\\u0000-\\u001f\\u007f]+$"
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*[\\\\:])[^\\u0000-\\u001f\\u007f]+$"
+                },
+                "maxItems": 100,
+                "uniqueItems": true
+              },
+              "languages": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9_+.#-]{0,31}$"
+                },
+                "maxItems": 30,
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "languages",
+              "script"
+            ]
+          },
+          "maxItems": 30
+        },
         "embeddedViews": {
           "type": "array",
           "items": {

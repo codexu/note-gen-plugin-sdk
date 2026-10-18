@@ -699,7 +699,7 @@ export function validatePluginManifest(
     } catch (error) { fail('manifest.invalid-resources', String(error), '$.resources') }
   }
   for (const path of options.files?.keys() ?? []) {
-    if (path.toLowerCase().endsWith('.wasm') && !(manifest.resources as import('@notegen/plugin-api').PluginResources | undefined)?.documentPreviews?.some(preview => preview.assets?.includes(path))) fail('manifest.undeclared-wasm', 'WASM must be a declared preview asset', path)
+    if (path.toLowerCase().endsWith('.wasm') && ![...((manifest.resources as import('@notegen/plugin-api').PluginResources | undefined)?.documentPreviews ?? []), ...((manifest.resources as import('@notegen/plugin-api').PluginResources | undefined)?.codeBlockRenderers ?? [])].some(renderer => renderer.assets?.includes(path))) fail('manifest.undeclared-wasm', 'WASM must be a declared preview or code-block-renderer asset', path)
   }
   if (manifest.entry === undefined) {
     if (!manifest.resources || Object.values(objectValue(manifest.resources, '$.resources')).every(x => !Array.isArray(x) || x.length === 0)) fail('manifest.missing-resources', 'A resource package needs resources')
@@ -709,7 +709,7 @@ export function validatePluginManifest(
   validatePermissionDeclarations(required(manifest, 'permissions', '$'))
   const contributions = validateContributions(required(manifest, 'contributes', '$'), pluginId)
   validateActivationEvents(required(manifest, 'activationEvents', '$'), contributions.commandIds)
-  validateLocalization(manifest, contributions.localizedTexts, options.files)
+  validateLocalization(manifest, [...contributions.localizedTexts, ...((manifest.resources as import('@notegen/plugin-api').PluginResources | undefined)?.codeBlockRenderers ?? []).map(renderer => renderer.name)], options.files)
 
   if (!satisfiesPluginApiRequirement(options.apiVersion ?? PLUGIN_API_VERSION, apiRequirement)) {
     fail('manifest.incompatible-api', `Plugin requires API ${apiRequirement}`, '$.apiVersion')

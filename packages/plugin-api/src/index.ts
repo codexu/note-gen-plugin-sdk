@@ -1,3 +1,5 @@
+import type { PluginCodeBlockRendererResource } from './code-block-renderer.js'
+import { validateCodeBlockRendererResources } from './code-block-renderer.js'
 /** The public API version implemented by this release of NoteGen. */
 export const PLUGIN_API_VERSION = '0.1.9' as const
 
@@ -1299,6 +1301,7 @@ export interface PluginResources {
   fileIcons?: PluginFileIconRule[]
   documentPreviews?: PluginDocumentPreviewResource[]
   embeddedViews?: PluginEmbeddedViewResource[]
+  codeBlockRenderers?: PluginCodeBlockRendererResource[]
 }
 /** The preview receives a MessagePort via notegen:preview-init, protocol 1.
  * Requests: { id, method: 'readDocument', offset, length } or
@@ -1344,13 +1347,15 @@ export function validatePluginResourcePath(value: unknown): asserts value is str
   })) throw new Error('Invalid resource path')
 }
 export function pluginResourcePaths(resources?: PluginResources): string[] {
-  return [...new Set([...(resources?.languages ?? []).map(x => x.messages), ...(resources?.documentPreviews ?? []).flatMap(x => [x.script, ...(x.assets ?? [])]), ...(resources?.embeddedViews ?? []).flatMap(x => [x.script, x.style])])]
+  return [...new Set([...(resources?.languages ?? []).map(x => x.messages), ...(resources?.documentPreviews ?? []).flatMap(x => [x.script, ...(x.assets ?? [])]), ...(resources?.embeddedViews ?? []).flatMap(x => [x.script, x.style]), ...(resources?.codeBlockRenderers ?? []).flatMap(x => [x.script, ...(x.assets ?? [])])])]
 }
 export function validatePluginResources(value: unknown): asserts value is PluginResources {
   const r = object(value)
-  keys(r, ['themes', 'languages', 'fileIcons', 'documentPreviews', 'embeddedViews'])
+  keys(r, ['themes', 'languages', 'fileIcons', 'documentPreviews', 'embeddedViews', 'codeBlockRenderers'])
+  if (r.codeBlockRenderers !== undefined) validateCodeBlockRendererResources(r.codeBlockRenderers, validatePluginResourcePath)
   for (const [kind, raw] of Object.entries(r)) {
     if (!Array.isArray(raw) || raw.length > (kind === 'fileIcons' ? 500 : 30)) throw new Error('Resource limit exceeded')
+    if (kind === 'codeBlockRenderers') continue
     const ids = new Set<string>()
     for (const item of raw) {
       const v = object(item)
@@ -1437,3 +1442,5 @@ export { createTaskQueue } from './tasks.js'
 export type { PluginTaskQueue, PluginTaskState, PluginTaskHandle } from './tasks.js'
 
 export { generateText, generateJson } from './ai-helper.js'
+
+export * from './code-block-renderer.js'

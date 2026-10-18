@@ -378,3 +378,15 @@ does not upgrade an older NoteGen host.
 Protocol 0.1.7 adds `documents.render/release`, the runtime-owned `document-preview` UI block, `clipboard.write`, `files.export` and `editor.setStyles/clearStyles`. Rendering accepts Markdown or sanitized HTML with `.article` CSS and explicit image mappings. Clipboard/file output is permission checked and user invoked; editor styles are automatically cleared with the plugin runtime. See [host contract, limits and integration](../../HOST-DOCUMENT-INTEGRATION.md).
 
 See the [document publisher example](../../examples/document-publisher) for Markdown/HTML rendering, raw output and document-handle lifecycle.
+
+## Code block renderer resources (development)
+
+Prepared for SDK package 0.1.12 and NoteGen desktop 0.38.3 or later; not yet
+published. The plugin API protocol remains 0.1.9, and the independent renderer
+resource channel uses protocol 1.
+
+`resources.codeBlockRenderers` and `registerCodeBlockRenderer` add static SVG/PNG
+previews for fenced Markdown blocks. The browser resource runs in a host-owned
+sandbox and receives only its matching block; it has no general plugin context.
+See [the development contract](../../CODE-BLOCK-RENDERERS.md) for messages, limits,
+compatibility, lifecycle and validation that remains to be performed.

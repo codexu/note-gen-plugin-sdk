@@ -26,6 +26,12 @@ editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.
 
+The next SDK package release is prepared as **0.1.12** across all four packages;
+it has not been published. It adds browser resources for static code-block
+previews on NoteGen desktop **0.38.3 or later**. The resource channel uses its own
+protocol 1; the existing plugin API protocol remains 0.1.9. See
+[the code-block renderer contract](CODE-BLOCK-RENDERERS.md).
+
 The API also provides interactive forms, tables and trees, editor-area plugin tabs,
 view close/focus/visibility methods, saved-note search, and separately authorized
 attachment reads and non-overwriting creation. Batch range edits and selection

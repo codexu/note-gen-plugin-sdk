@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-cli",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Create, validate, build, package, sign, and verify NoteGen plugins.",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,7 @@
     "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
   },
   "dependencies": {
-    "@notegen/plugin-api": "workspace:^",
+    "@notegen/plugin-api": "workspace:^0.1.12",
     "canonicalize": "^4.0.0",
     "commander": "^14.0.3",
     "es-module-lexer": "^3.0.2",

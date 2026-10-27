@@ -1,5 +1,5 @@
 import { createMemoryRecords } from './records.js'
-import { validatePluginClipboardContent, validatePluginExportFileOptions, validatePluginRenderDocumentOptions, PLUGIN_DOCUMENT_LIMITS, validatePluginResources } from '@notegen/plugin-api'
+import { validatePluginClipboardContent, validatePluginExportFileOptions, validatePluginExportHtmlOptions, validatePluginCopyHtmlOptions, validatePluginRenderDocumentOptions, PLUGIN_DOCUMENT_LIMITS, PLUGIN_HTML_EXPORT_LIMITS, validatePluginResources } from '@notegen/plugin-api'
 import { parsePluginUiExtension, flattenPluginUiBlocks } from '@notegen/plugin-api'
 import {
   PLUGIN_API_VERSION,
@@ -7,7 +7,7 @@ import {
 } from '@notegen/plugin-api'
 import { createHash } from 'node:crypto'
 import type {
-  PluginRenderDocumentOptions, PluginRenderedDocument, PluginExportFileOptions, PluginExportFileResult, PluginClipboardContent,
+  PluginRenderDocumentOptions, PluginRenderedDocument, PluginExportFileOptions, PluginExportFileResult, PluginExportHtmlOptions, PluginExportHtmlResult, PluginCopyHtmlOptions, PluginCopyHtmlResult, PluginAttachment, PluginClipboardContent,
   ActiveEditorContext,
   ApplyEditorEditOptions,
   ApplyEditorEditsOptions,
@@ -53,6 +53,7 @@ import type {
   PluginSettingValue,
   PluginStatusBarUpdate,
   PluginUiDocument,
+  PluginFormBlock,
   PluginFormField,
   PluginDialogCloseEvent,
   ReadNoteOptions,
@@ -124,7 +125,7 @@ export type PluginTestCallName =
   | 'editor.getTarget'
   | 'calendar.resolveDay'
   | 'notes.read'
-  | 'documents.render' | 'documents.release' | 'clipboard.write' | 'files.export' | 'editor.setStyles' | 'editor.clearStyles'
+  | 'documents.render' | 'documents.release' | 'documents.exportHtml' | 'documents.copyHtml' | 'clipboard.write' | 'files.export' | 'editor.setStyles' | 'editor.clearStyles'
   | 'fileIcons.setRules'
   | 'fileIcons.clear'
   | 'attachments.read'
@@ -202,11 +203,31 @@ export interface PluginTestScopedPermissionGrant {
 
 export type PluginTestPermissionGrant = boolean | PluginTestScopedPermissionGrant
 
+/** Native rendering/saving is explicit test infrastructure, never simulated by the Node host. */
+export interface PluginTestHtmlExportJob {
+  readonly options: Readonly<PluginExportHtmlOptions>
+  readonly snapshot: Readonly<EditorTextSnapshot>
+  readonly sourcePath?: string
+  readonly signal: PluginAbortSignal
+  /** Call immediately before simulated output, after any asynchronous save dialog. */
+  readonly assertCanWrite: () => void
+  /** Workspace-relative, permission checked reads; no implicit network or filesystem access. */
+  readonly readAttachment: (path: string) => Promise<PluginAttachment>
+}
+
+export interface PluginTestHtmlCopyJob extends Omit<PluginTestHtmlExportJob, 'options'> {
+  readonly options: Readonly<PluginCopyHtmlOptions>
+}
+
 export interface PluginTestHostOptions {
   /** Inject a renderer: the Node test host does not pretend to implement browser CSS layout. */
   readonly renderDocument?: (options: PluginRenderDocumentOptions) => Promise<Omit<PluginRenderedDocument, 'id'>>
   /** Receives a copy of the owned document when exporting by documentId. */
   readonly exportFile?: (options: PluginExportFileOptions, document?: PluginRenderedDocument) => Promise<PluginExportFileResult>
+  /** Owns browser rendering, output-size limits and saving; receives a frozen source snapshot, not rendered HTML. */
+  readonly exportHtml?: (job: PluginTestHtmlExportJob) => Promise<Pick<PluginExportHtmlResult, 'saved' | 'warnings'>>
+  /** Owns rendering and clipboard output; receives only the frozen source and must call assertCanWrite immediately before writing. */
+  readonly copyHtml?: (job: PluginTestHtmlCopyJob) => Promise<Pick<PluginCopyHtmlResult, 'copied' | 'warnings'>>
   readonly manifest: PluginManifestV1
   /** Declared permissions default to unrestricted grants; these values override them. */
   readonly permissions?: Readonly<Partial<Record<PluginPermissionName, PluginTestPermissionGrant>>>
@@ -401,11 +422,17 @@ class MemoryPluginTestHost implements PluginTestHost {
   private readonly renderedDocuments = new Map<string, PluginRenderedDocument>()
   private readonly documentRenderer?: PluginTestHostOptions['renderDocument']
   private readonly fileExporter?: PluginTestHostOptions['exportFile']
+  private readonly htmlExporter?: PluginTestHostOptions['exportHtml']
+  private readonly htmlCopier?: PluginTestHostOptions['copyHtml']
   private readonly relatedSearch?: PluginTestHostOptions['searchRelated']
   private clipboardContent: PluginClipboardContent | null = null
   private editorCss = ''
   private userCommandDepth = 0
   private documentRendering = false
+  private htmlExporting = false
+  private htmlExportSignal: TestAbortSignal | null = null
+  private htmlOutputPermission: 'files.export' | 'clipboard.write' | null = null
+  private readonly htmlExportAttachmentPaths = new Set<string>()
   private nextDocumentId = 1
   private chatDraft = ''
   private promptPending = false
@@ -514,6 +541,8 @@ class MemoryPluginTestHost implements PluginTestHost {
     this.aiGenerate = options.aiGenerate
     this.documentRenderer = options.renderDocument
     this.fileExporter = options.exportFile
+    this.htmlExporter = options.exportHtml
+    this.htmlCopier = options.copyHtml
     this.recordApi = createMemoryRecords({
       ...(options.records ? { records: options.records } : {}),
       ...(options.recordTags ? { tags: options.recordTags } : {}),
@@ -673,6 +702,9 @@ class MemoryPluginTestHost implements PluginTestHost {
       )
     }
     this.permissionGrants.set(permission, normalizePermissionGrant(grant, permission))
+    if (this.htmlExportSignal && (!this.hasPermission('editor.read') || (this.htmlOutputPermission !== null && !this.hasPermission(this.htmlOutputPermission)) || [...this.htmlExportAttachmentPaths].some(path => !this.hasPermission('attachments.read', path)))) {
+      this.htmlExportSignal.abort(new PluginError('PermissionDenied', 'A permission used by HTML export was revoked'))
+    }
     for (const id of this.embeddedContexts.keys()) {
       const state = this.getViewState(id)
       for (const listener of this.viewListeners) void Promise.resolve().then(() => listener(state)).catch(() => undefined)
@@ -801,6 +833,8 @@ class MemoryPluginTestHost implements PluginTestHost {
 
   async emitWorkspaceChange(event: WorkspaceChangeEvent): Promise<void> {
     if (!this.active) return
+    if (event.current.id !== this.workspaceInfo.id) this.htmlExportSignal?.abort(new PluginError('WorkspaceChanged', 'Workspace changed during HTML export'))
+    if (event.current.id !== this.workspaceInfo.id) { this.workspaceInfo.id = event.current.id; this.workspaceInfo.name = event.current.name; this.noteStore.clear(); this.workspaceStorage.clear() }
     await Promise.allSettled([...this.workspaceListeners].map((listener) => (
       Promise.resolve().then(() => listener({ previous: event.previous && { ...event.previous }, current: { ...event.current } }))
     )))
@@ -822,7 +856,7 @@ class MemoryPluginTestHost implements PluginTestHost {
         id: this.manifest.id,
         version: this.manifest.version,
         apiVersion: PLUGIN_API_VERSION,
-        capabilities: this.surface === 'main' ? ['embedded-views', 'workspace-views', 'contextual-views', 'editor-actions', 'records', 'chat-draft', 'ai-generation', 'ui-prompts', 'document-rendering', 'document-preview', 'clipboard-write', 'file-export', 'editor-styles', 'related-notes-search'] as const : ['document-rendering', 'clipboard-write', 'file-export', 'editor-styles'] as const,
+        capabilities: this.surface === 'main' ? ['embedded-views', 'workspace-views', 'contextual-views', 'editor-actions', 'records', 'chat-draft', 'ai-generation', 'ui-prompts', 'document-rendering', 'document-preview', 'html-export', 'html-copy', 'clipboard-write', 'file-export', 'editor-styles', 'related-notes-search'] as const : ['document-rendering', 'html-export', 'html-copy', 'clipboard-write', 'file-export', 'editor-styles'] as const,
       }),
       log: Object.freeze({
         info: (message: string) => this.record('log.info', [String(message).slice(0, 1000)]),
@@ -852,6 +886,8 @@ class MemoryPluginTestHost implements PluginTestHost {
           } finally { this.documentRendering = false }
         },
         release: async id => { this.assertUsable(); this.record('documents.release', [id]); this.renderedDocuments.delete(id) },
+        exportHtml: options => this.exportHtml(options),
+        copyHtml: options => this.copyHtml(options),
       },
       clipboard: {
         write: async content => {
@@ -1359,6 +1395,121 @@ class MemoryPluginTestHost implements PluginTestHost {
       workspaceId: this.workspaceInfo.id,
       path,
       opened: options.open,
+    }
+  }
+
+  private async exportHtml(options: PluginExportHtmlOptions): Promise<PluginExportHtmlResult> {
+    return this.htmlOutput(options, 'file') as Promise<PluginExportHtmlResult>
+  }
+
+  private async copyHtml(options: PluginCopyHtmlOptions): Promise<PluginCopyHtmlResult> {
+    return this.htmlOutput(options, 'copy') as Promise<PluginCopyHtmlResult>
+  }
+
+  private async htmlOutput(options: PluginExportHtmlOptions | PluginCopyHtmlOptions, output: 'file' | 'copy'): Promise<PluginExportHtmlResult | PluginCopyHtmlResult> {
+    this.assertUsable()
+    this.assertPermission('editor.read')
+    const outputPermission = output === 'file' ? 'files.export' : 'clipboard.write'
+    this.assertPermission(outputPermission)
+    this.assertOutputUserCommand()
+    if (output === 'file') validatePluginExportHtmlOptions(options)
+    else validatePluginCopyHtmlOptions(options)
+    this.record(output === 'file' ? 'documents.exportHtml' : 'documents.copyHtml', [options])
+    if (this.htmlExporting) throw new PluginError('QuotaExceeded', 'Only one HTML export may run at once')
+    if (output === 'file' ? !this.htmlExporter : !this.htmlCopier) throw new PluginError('UnavailableOnPlatform', `Provide ${output === 'file' ? 'exportHtml' : 'copyHtml'} in the test host options`)
+    const editor = this.editor
+    const current = this.editorSnapshot
+    if (!editor || !current || editor.editorId !== options.editorId || current.editorId !== editor.editorId || current.documentId !== editor.documentId) throw new PluginError('NotFound', 'The requested editor is not active')
+    if (editor.revision !== options.expectedRevision || current.revision !== options.expectedRevision) throw new PluginError('StaleRevision', 'The expected editor revision is stale')
+    if (editor.composing) throw new PluginError('EditorBusy', 'The editor is handling text composition')
+    if (utf8Length(current.text) > PLUGIN_HTML_EXPORT_LIMITS.markdownBytes) throw new PluginError('QuotaExceeded', 'HTML export source exceeds its byte limit')
+    const snapshot = Object.freeze({ ...current })
+    const request = Object.freeze({ ...options })
+    const sourcePath = editor.path === undefined ? undefined : assertNotePath(editor.path)
+    const workspaceId = this.workspaceInfo.id
+    const attachments = new Map<string, number>()
+    const transactionSignal = new TestAbortSignal()
+    let imageBytes = 0
+    let transactionActive = true
+    const assertCanWrite = () => {
+      if (!transactionActive) throw new PluginError('Cancelled', 'The HTML export transaction has finished')
+      transactionSignal.throwIfAborted()
+      this.assertUsable()
+      if (workspaceId !== this.workspaceInfo.id) throw new PluginError('WorkspaceChanged', 'Workspace changed during HTML export')
+      this.assertPermission('editor.read')
+      this.assertPermission(outputPermission)
+      for (const path of attachments.keys()) this.assertPermission('attachments.read', path)
+    }
+    this.htmlExporting = true
+    this.htmlExportSignal = transactionSignal
+    this.htmlOutputPermission = outputPermission
+    this.htmlExportAttachmentPaths.clear()
+    try {
+      const job = {
+        options: request,
+        snapshot,
+        ...(sourcePath ? { sourcePath } : {}),
+        signal: transactionSignal,
+        assertCanWrite,
+        readAttachment: async (input: string) => {
+          assertCanWrite()
+          const path = assertAttachmentPath(input)
+          this.assertPermission('attachments.read', path)
+          this.record('attachments.read', [{ path }])
+          const base64 = this.attachmentStore.get(path)
+          if (base64 === undefined) throw new PluginError('NotFound', 'Attachment does not exist')
+          const size = Buffer.from(base64, 'base64').length
+          if (size > PLUGIN_HTML_EXPORT_LIMITS.imageBytes) throw new PluginError('QuotaExceeded', 'HTML export image exceeds its byte limit')
+          if (!attachments.has(path)) {
+            if (attachments.size >= PLUGIN_HTML_EXPORT_LIMITS.images || imageBytes + size > PLUGIN_HTML_EXPORT_LIMITS.imageTotalBytes) throw new PluginError('QuotaExceeded', 'HTML export image budget exceeded')
+            attachments.set(path, size)
+            this.htmlExportAttachmentPaths.add(path)
+            imageBytes += size
+          }
+          assertCanWrite()
+          return { path, base64, size }
+        },
+      }
+      const result = await this.awaitWhileActive(() => new Promise<Pick<PluginExportHtmlResult, 'saved' | 'warnings'> | Pick<PluginCopyHtmlResult, 'copied' | 'warnings'>>((resolve, reject) => {
+        const cancel = () => reject(transactionSignal.reason)
+        transactionSignal.addEventListener('abort', cancel, { once: true })
+        Promise.resolve().then(async (): Promise<Pick<PluginExportHtmlResult, 'saved' | 'warnings'> | Pick<PluginCopyHtmlResult, 'copied' | 'warnings'>> => {
+          transactionSignal.throwIfAborted()
+          return output === 'file' ? this.htmlExporter!(job as PluginTestHtmlExportJob) : this.htmlCopier!(job as PluginTestHtmlCopyJob)
+        }).then(value => {
+          transactionSignal.removeEventListener('abort', cancel)
+          resolve(value)
+        }, (error: unknown) => {
+          transactionSignal.removeEventListener('abort', cancel)
+          reject(error)
+        })
+      }))
+      assertCanWrite()
+      if (!isPlainRecord(result)) throw new PluginError('RuntimeFailure', 'Invalid HTML output adapter result')
+      const outputResult: Readonly<Record<string, unknown>> = result
+      if (!Array.isArray(outputResult.warnings)
+        || (output === 'file' ? !hasOnlyKeys(outputResult, new Set(['saved', 'warnings'])) || typeof outputResult.saved !== 'boolean'
+          : !hasOnlyKeys(outputResult, new Set(['copied', 'warnings'])) || outputResult.copied !== true)) throw new PluginError('RuntimeFailure', 'Invalid HTML output adapter result')
+      const warnings: PluginExportHtmlResult['warnings'][number][] = []
+      for (const warning of outputResult.warnings) {
+        if (!isPlainRecord(warning) || !hasOnlyKeys(warning, new Set(['code', 'message', 'source']))
+          || typeof warning.code !== 'string' || !['asset-not-embedded', 'unsupported-content', 'highlight-fallback', 'additional-warnings', 'rich-text-css-omitted', 'rich-text-math-fallback', 'rich-text-script-omitted', 'rich-text-content-omitted'].includes(warning.code)
+          || typeof warning.message !== 'string' || (warning.source !== undefined && typeof warning.source !== 'string')) throw new PluginError('RuntimeFailure', 'Invalid HTML export warning')
+        warnings.push({
+          code: warning.code as PluginExportHtmlResult['warnings'][number]['code'],
+          message: warning.message,
+          ...(typeof warning.source === 'string' ? { source: warning.source } : {}),
+        })
+      }
+      const identity = { editorId: snapshot.editorId, documentId: snapshot.documentId, revision: snapshot.revision, warnings }
+      return output === 'file' ? { ...identity, saved: outputResult.saved as boolean } : { ...identity, copied: true }
+    } finally {
+      transactionActive = false
+      transactionSignal.abort(new PluginError('Cancelled', 'The HTML export transaction has finished'))
+      this.htmlExportSignal = null
+      this.htmlOutputPermission = null
+      this.htmlExportAttachmentPaths.clear()
+      this.htmlExporting = false
     }
   }
 
@@ -2113,6 +2264,7 @@ class MemoryPluginTestHost implements PluginTestHost {
   }
 
   private stop(reason: PluginError): void {
+    this.htmlExportSignal?.abort(reason)
     this.lifecycle = 'stopped'
     this.abortSignal.abort(reason)
     for (const signal of this.aiRequests.values()) signal.abort(reason)
@@ -2619,7 +2771,7 @@ function validateUiDocument(
       continue
     }
     if (candidate.type === 'form') {
-      if (!hasOnlyKeys(candidate, new Set(['type', 'id', 'resetKey', 'fields', 'submitLabel', 'command', 'changeCommand', 'submitDisabled'])) || !Array.isArray(candidate.fields) || candidate.fields.length < 1 || candidate.fields.length > 30) throw new PluginError('InvalidPath', 'Invalid form')
+      if (!hasOnlyKeys(candidate, new Set(['type', 'id', 'resetKey', 'fields', 'submitLabel', 'command', 'changeCommand', 'submitDisabled', 'submitActions'])) || !Array.isArray(candidate.fields) || candidate.fields.length < 1 || candidate.fields.length > 30) throw new PluginError('InvalidPath', 'Invalid form')
       const id = uiString(candidate.id, 'Form ID', 160, 1)
       if (formIds.has(id)) throw new PluginError('InvalidPath', 'Duplicate form ID')
       formIds.add(id)
@@ -2631,7 +2783,20 @@ function validateUiDocument(
       if (changeCommand && !commandIds.has(changeCommand)) throw new PluginError('PermissionDenied', 'Undeclared change command')
       if (candidate.submitDisabled !== undefined && typeof candidate.submitDisabled !== 'boolean') throw new PluginError('InvalidPath', 'Invalid submit disabled flag')
       if (new Set(fields.map(field => field.id)).size !== fields.length) throw new PluginError('InvalidPath', 'Duplicate form field ID')
-      blocks.push({ type: 'form', id, command, fields, ...(changeCommand ? { changeCommand } : {}), ...(candidate.submitDisabled === undefined ? {} : { submitDisabled: candidate.submitDisabled }), ...(candidate.resetKey === undefined ? {} : { resetKey: uiString(candidate.resetKey, 'Form reset key', 160) }), submitLabel: uiString(candidate.submitLabel, 'Submit label', 160, 1) })
+      let submitActions: NonNullable<PluginFormBlock['submitActions']> | undefined
+      if (candidate.submitActions !== undefined) {
+        if (!Array.isArray(candidate.submitActions) || candidate.submitActions.length < 1 || candidate.submitActions.length > 6) throw new PluginError('InvalidPath', 'Invalid form submit actions')
+        submitActions = candidate.submitActions.map(action => {
+          if (!isPlainRecord(action) || !hasOnlyKeys(action, new Set(['id', 'label', 'command', 'variant', 'disabled']))) throw new PluginError('InvalidPath', 'Invalid form submit action')
+          const actionCommand = uiString(action.command, 'Form action command', 220, 1)
+          if (!commandIds.has(actionCommand)) throw new PluginError('PermissionDenied', 'Undeclared form action command')
+          if (action.variant !== undefined && action.variant !== 'default' && action.variant !== 'secondary' && action.variant !== 'destructive') throw new PluginError('InvalidPath', 'Invalid form action variant')
+          if (action.disabled !== undefined && typeof action.disabled !== 'boolean') throw new PluginError('InvalidPath', 'Invalid form action disabled flag')
+          return { id: uiString(action.id, 'Form action ID', 160, 1), label: uiString(action.label, 'Form action label', 160, 1), command: actionCommand, ...(action.variant === undefined ? {} : { variant: action.variant }), ...(action.disabled === undefined ? {} : { disabled: action.disabled }) }
+        })
+        if (new Set(submitActions.map(action => action.id)).size !== submitActions.length) throw new PluginError('InvalidPath', 'Duplicate form action ID')
+      }
+      blocks.push({ type: 'form', id, command, fields, ...(changeCommand ? { changeCommand } : {}), ...(submitActions ? { submitActions } : {}), ...(candidate.submitDisabled === undefined ? {} : { submitDisabled: candidate.submitDisabled }), ...(candidate.resetKey === undefined ? {} : { resetKey: uiString(candidate.resetKey, 'Form reset key', 160) }), submitLabel: uiString(candidate.submitLabel, 'Submit label', 160, 1) })
       continue
     }
     if (candidate.type === 'navigation-list') {

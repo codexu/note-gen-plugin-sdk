@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-api",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Public TypeScript contract for NoteGen plugins.",
   "license": "MIT",
   "type": "module",
@@ -44,7 +44,7 @@
     "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
   },
   "notegen": {
-    "pluginApiVersion": "0.1.9"
+    "pluginApiVersion": "0.1.12"
   },
   "dependencies": {
     "yaml": "^2.8.0"

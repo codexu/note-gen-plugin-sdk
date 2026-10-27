@@ -11,7 +11,7 @@ importers:
   packages/create-notegen-plugin:
     dependencies:
       '@notegen/plugin-cli':
-        specifier: workspace:^0.1.12
+        specifier: workspace:^0.1.14
         version: link:../plugin-cli
     devDependencies:
       '@types/node':
@@ -34,7 +34,7 @@ importers:
   packages/plugin-cli:
     dependencies:
       '@notegen/plugin-api':
-        specifier: workspace:^0.1.12
+        specifier: workspace:^0.1.14
         version: link:../plugin-api
       canonicalize:
         specifier: ^4.0.0
@@ -80,7 +80,7 @@ importers:
   packages/plugin-test:
     dependencies:
       '@notegen/plugin-api':
-        specifier: workspace:^0.1.12
+        specifier: workspace:^0.1.14
         version: link:../plugin-api
     devDependencies:
       '@types/node':

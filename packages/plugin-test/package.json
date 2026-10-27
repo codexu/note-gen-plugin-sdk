@@ -1,6 +1,6 @@
 {
   "name": "@notegen/plugin-test",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "In-process test host for NoteGen plugins.",
   "license": "MIT",
   "type": "module",
@@ -40,7 +40,7 @@
     "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
   },
   "dependencies": {
-    "@notegen/plugin-api": "workspace:^0.1.12"
+    "@notegen/plugin-api": "workspace:^0.1.14"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

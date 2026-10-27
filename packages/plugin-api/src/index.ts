@@ -1,7 +1,7 @@
 import type { PluginCodeBlockRendererResource } from './code-block-renderer.js'
 import { validateCodeBlockRendererResources } from './code-block-renderer.js'
 /** The public API version implemented by this release of NoteGen. */
-export const PLUGIN_API_VERSION = '0.1.9' as const
+export const PLUGIN_API_VERSION = '0.1.12' as const
 
 export type PluginPlatform = 'desktop' | 'ios' | 'android'
 
@@ -469,6 +469,14 @@ export interface PluginFormBlock {
   submitLabel: string
   /** Receives { formId, values, dialogId? }. Hidden/disabled fields are omitted. May return { fieldErrors, message }. */
   command: string
+  /** When present, replaces the single submit button with 1–6 actions. Each declared command receives the same validated current values plus actionId. */
+  submitActions?: readonly {
+    id: string
+    label: string
+    command: string
+    variant?: 'default' | 'secondary' | 'destructive'
+    disabled?: boolean
+  }[]
 }
 
 export interface PluginViewState {
@@ -661,7 +669,7 @@ export interface PluginChatDraftOptions {
   overwrite?: boolean
 }
 
-export type PluginCapability = 'embedded-views' | 'workspace-views' | 'contextual-views' | 'editor-actions' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'clipboard-write' | 'file-export' | 'editor-styles' | 'terminal' | 'related-notes-search'
+export type PluginCapability = 'embedded-views' | 'workspace-views' | 'contextual-views' | 'editor-actions' | 'records' | 'chat-draft' | 'ai-generation' | 'ui-prompts' | 'document-rendering' | 'document-preview' | 'html-export' | 'html-copy' | 'clipboard-write' | 'file-export' | 'editor-styles' | 'terminal' | 'related-notes-search'
 
 export type PluginPromptOptions =
   | { type: 'confirm'; title: string; description?: string; confirmLabel?: string }
@@ -694,6 +702,59 @@ export type PluginExportFileOptions = { fileName: string } & (
 )
 /** Byte and lifecycle budgets shared by the host and SDK adapters. */
 export const PLUGIN_DOCUMENT_LIMITS = Object.freeze({ markdownBytes: 128 * 1024, cssBytes: 16 * 1024, htmlBytes: 512 * 1024, exportBytes: 1024 * 1024, images: 32, imageBytes: 256 * 1024, documents: 8 })
+/** Native HTML export keeps rendered content in the host; these budgets do not expand documents.render or files.export. */
+export const PLUGIN_HTML_EXPORT_LIMITS = Object.freeze({
+  markdownBytes: 2 * 1024 * 1024,
+  codeCharacters: 10000,
+  exportBytes: 32 * 1024 * 1024,
+  images: 32,
+  imageBytes: 1024 * 1024,
+  imageTotalBytes: 16 * 1024 * 1024,
+  renderTimeoutMs: 30000,
+})
+
+export interface PluginExportHtmlOptions {
+  editorId: string
+  /** Captures this exact revision, including unsaved Markdown. Later edits do not change the export. */
+  expectedRevision: number
+  /** A filename without a directory. The host supplies the .html extension when omitted. */
+  fileName?: string
+  /** Appended only to the final exported HTML; never applied to the NoteGen interface. */
+  css?: string
+  /** Runs only when the exported file is opened, never during host rendering. */
+  javascript?: string
+}
+
+export interface PluginExportHtmlWarning {
+  code: 'asset-not-embedded' | 'unsupported-content' | 'highlight-fallback' | 'additional-warnings'
+    | 'rich-text-css-omitted' | 'rich-text-math-fallback' | 'rich-text-script-omitted' | 'rich-text-content-omitted'
+  message: string
+  /** The original document reference, never a resolved absolute host path. */
+  source?: string
+}
+
+export interface PluginExportHtmlResult {
+  /** Cancellation is saved:false; no absolute destination path is exposed. */
+  saved: boolean
+  editorId: string
+  documentId: string
+  revision: number
+  warnings: readonly PluginExportHtmlWarning[]
+}
+
+export interface PluginCopyHtmlOptions extends Omit<PluginExportHtmlOptions, 'fileName'> {
+  /** `source` writes complete HTML as plain text; `rich-text` writes a portable HTML fragment and readable plain text. */
+  format: 'source' | 'rich-text'
+}
+
+export interface PluginCopyHtmlResult {
+  copied: true
+  editorId: string
+  documentId: string
+  revision: number
+  warnings: readonly PluginExportHtmlWarning[]
+}
+
 function documentBytes(text: string): number {
   let bytes = 0
   for (const character of text) {
@@ -705,6 +766,34 @@ function documentBytes(text: string): number {
 function documentString(value: unknown, max: number): asserts value is string {
   if (typeof value !== 'string') throw new PluginError('InvalidPath', 'Expected document text')
   if (documentBytes(value) > max) throw new PluginError('QuotaExceeded', 'Document exceeds its byte limit')
+}
+/** Validates the small RPC request; source, assets and output stay in the native host. */
+export function validatePluginExportHtmlOptions(value: unknown): PluginExportHtmlOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PluginError('InvalidPath', 'Invalid HTML export options')
+  const v = value as Record<string, unknown>
+  if (Object.keys(v).some(key => !['editorId', 'expectedRevision', 'fileName', 'css', 'javascript'].includes(key))) throw new PluginError('InvalidPath', 'Unknown HTML export option')
+  documentString(v.editorId, 160)
+  if (!v.editorId.trim() || /[\u0000-\u001f\u007f]/.test(v.editorId)) throw new PluginError('InvalidPath', 'Invalid editor ID')
+  if (typeof v.expectedRevision !== 'number' || !Number.isSafeInteger(v.expectedRevision) || v.expectedRevision < 0) throw new PluginError('InvalidPath', 'Expected a nonnegative editor revision')
+  if (v.fileName !== undefined) {
+    documentString(v.fileName, 160)
+    if (!v.fileName.trim() || /[\\/<>:"|?*\u0000-\u001f\u007f]/.test(v.fileName) || /[. ]$/.test(v.fileName)) throw new PluginError('InvalidPath', 'Export requires a portable filename without a directory')
+  }
+  for (const key of ['css', 'javascript'] as const) {
+    const code = v[key]
+    if (code !== undefined && typeof code !== 'string') throw new PluginError('InvalidPath', 'HTML export code must be a string')
+    if (typeof code === 'string' && code.length > PLUGIN_HTML_EXPORT_LIMITS.codeCharacters) throw new PluginError('QuotaExceeded', 'HTML export code exceeds its character limit')
+  }
+  return value as PluginExportHtmlOptions
+}
+/** The host retains source and output. Rich-text copying never executes or includes JavaScript. */
+export function validatePluginCopyHtmlOptions(value: unknown): PluginCopyHtmlOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new PluginError('InvalidPath', 'Invalid HTML copy options')
+  const v = value as Record<string, unknown>
+  if (Object.keys(v).some(key => !['editorId', 'expectedRevision', 'css', 'javascript', 'format'].includes(key))) throw new PluginError('InvalidPath', 'Unknown HTML copy option')
+  if (v.format !== 'source' && v.format !== 'rich-text') throw new PluginError('InvalidPath', 'Invalid HTML copy format')
+  validatePluginExportHtmlOptions({ editorId: v.editorId, expectedRevision: v.expectedRevision, ...(v.css === undefined ? {} : { css: v.css }), ...(v.javascript === undefined ? {} : { javascript: v.javascript }) })
+  return value as PluginCopyHtmlOptions
 }
 /** Validates transport shape and quotas. Browser CSS parsing is performed by the host renderer. */
 export function validatePluginRenderDocumentOptions(value: unknown): PluginRenderDocumentOptions {
@@ -791,6 +880,10 @@ export interface PluginContext {
   readonly documents: {
     readonly render: (options: PluginRenderDocumentOptions) => Promise<PluginRenderedDocument>
     readonly release: (id: string) => Promise<void>
+    /** Requires html-export, editor.read, files.export and a user command. Local images need attachments.read; no remote fetches. */
+    readonly exportHtml: (options: PluginExportHtmlOptions) => Promise<PluginExportHtmlResult>
+    /** Requires html-copy, editor.read, clipboard.write and a user command. Rich text does not execute or copy JavaScript. */
+    readonly copyHtml: (options: PluginCopyHtmlOptions) => Promise<PluginCopyHtmlResult>
   }
   readonly clipboard: {
     /** Requires clipboard.write and a host user command. HTML is sanitized; no clipboard read API. */

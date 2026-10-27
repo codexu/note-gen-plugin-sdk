@@ -52,7 +52,7 @@ Rollback is to stop/uninstall the new plugin and restore the prior protocol/depe
 
 ## Manual acceptance
 
-- Compare normal visual, source and sectioned Markdown snapshots; export includes unsaved content without editing the note.
+- Compare visual and source Markdown snapshots; export includes unsaved content without editing the note. The SDK also reserves `sectioned` as a mode, but the current NoteGen host does not expose a sectioned editor.
 - Switch the three templates, color, font size and spacing; invalid CSS/color produces a form error and leaves saved configuration intact.
 - Copy into both a rich-text target and a plain-text target. Paste into the real WeChat editor to verify headings, code, lists, references and images on macOS/Windows/Linux.
 - Edit the source after preview; copy/export are disabled until refresh. Switching notes must never reuse a prior note's export.
@@ -60,3 +60,80 @@ Rollback is to stop/uninstall the new plugin and restore the prior protocol/depe
 - Try output from activation/form-change callbacks; reject it. Try another plugin's document ID, expired IDs and oversized documents.
 - Apply styles to multiple panes/long-note previews, disable/re-enable the plugin and switch workspace; no styles or document handles remain from the stopped runtime.
 - Verify denied/allowed attachment folders, oversized local images and remote image warnings. Preview must not make network requests.
+
+## Native HTML export (API 0.1.11, development)
+
+SDK packages 0.1.14 prepare `documents.exportHtml` as an additional contract,
+separate from the limited article renderer described above. This is unreleased
+source preparation. A matching host advertises `html-export`; plugin manifests
+require API `^0.1.11`.
+
+The request is `{ editorId, expectedRevision, fileName?, css?, javascript? }`.
+The host checks `editor.read`, `files.export` and a user-command scope, captures
+that editor's canonical unsaved Markdown at the exact revision, and retains the
+snapshot, rendered document and assets inside one transaction. It uses the
+native export renderer rather than the portable article renderer. No public
+document handles or large HTML round trips are introduced. Local relative image
+paths are resolved by the host from the captured editor's source path and require
+`attachments.read` for each resolved attachment. No remote resources are fetched.
+
+Only the final output receives custom CSS and JavaScript. Neither may run or load
+resources inside the host rendering container; the final script runs when the
+exported file is opened. Markdown-derived executable markup continues to be
+removed. HTML assembly must preserve user code without allowing closing tags to
+break the generated document. PDF, clipboard, normal exports and the NoteGen
+interface keep their existing behavior.
+
+`PLUGIN_HTML_EXPORT_LIMITS` defines 2 MiB Markdown; 10,000 UTF-16 code units each
+for CSS and JavaScript; 32 MiB final HTML; 32 local images, 1 MiB each and 16 MiB in
+total; and 30 seconds for rendering. Only one transaction per runtime is allowed.
+The render timeout excludes waiting for the native save dialog. These limits do
+not expand the old `PLUGIN_DOCUMENT_LIMITS` or the Worker transport budget.
+
+The result is `{ saved, editorId, documentId, revision, warnings }`. Save-dialog
+cancellation returns `saved: false`; destination and resolved absolute attachment
+paths never cross the plugin boundary. Warnings contain a code, message and
+optional original document reference. Codes are `asset-not-embedded`,
+`unsupported-content` and `highlight-fallback`. Invalid input, stale capture,
+composition, missing editor, revoked permission, quotas, cancellation, workspace
+changes, unavailable platforms and output failures use existing `PluginError`
+codes rather than an HTML-specific error channel.
+
+The captured snapshot is immutable: later source edits do not invalidate it or
+switch the output to another note. After asynchronous work and immediately before
+writing, recheck runtime/workspace identity, output authority and every used asset
+grant. Stopping a runtime must abort its outstanding render and release internal
+resources; save-dialog waiting uses the existing command-timeout exemption.
+
+The test host exposes `exportHtml(job)` rather than faking native rendering. Its
+job provides the frozen source, scoped attachment reads, runtime signal and an
+`assertCanWrite` callback for the adapter's final simulated write. Browser/native
+rendering, asset encoding, output-size and render-time limits remain explicit
+adapter responsibilities. Publication and matching host dependency resolution are
+separate release steps.
+
+## Native HTML copy and form actions (API 0.1.12, development)
+
+The `html-copy` capability adds `documents.copyHtml({ editorId, expectedRevision,
+css?, javascript?, format })` without a large Worker round trip. It shares the
+native HTML export snapshot and authorized attachment transaction. `source` writes
+standalone HTML as `text/plain`; `rich-text` writes sanitized portable `text/html`
+and readable plain text. The rich result neither executes nor contains JavaScript.
+The host may inline only supported safe CSS and must explicitly warn about omitted
+CSS, math fallback, script omission and unsupported content. It must not load remote
+resources while generating output. Local images remain subject to their attachment
+grant; receiving apps may filter images or styles.
+If the response must group excess warnings, add an `additional-warnings` warning
+instead of silently dropping the remaining diagnostics.
+
+`editor.read`, `clipboard.write` and an explicit user command are mandatory;
+`files.export` is not needed. Check used permissions and workspace immediately
+before writing. The return value is `{ copied: true, editorId, documentId, revision,
+warnings }`; failures use `PluginError` and must not report success. Use the
+existing HTML export budgets and retain a single output transaction per runtime.
+
+Form blocks may declare up to six unique `submitActions`; the host validates all
+declared commands and passes the action ID and current validated values in the
+user-authorized submission. Existing single-submit forms retain their behavior.
+Plugins using these additions require `^0.1.12` until a later compatible protocol
+is available. SDK package 0.1.14 is still unreleased source preparation.

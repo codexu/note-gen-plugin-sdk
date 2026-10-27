@@ -21,15 +21,15 @@ project scaffold, build and package CLI, and an in-process test host.
 This repository is intentionally limited to the plugin ecosystem. It is not a
 client SDK for NoteGen notes, sync providers, or a future server API.
 
-This checkout targets `@notegen/plugin-api` protocol 0.1.9. It includes revision-safe
+This checkout targets `@notegen/plugin-api` protocol 0.1.12. It includes revision-safe
 editor edits, complete Markdown note lifecycle operations, workspace and note
 events, host-rendered declarative views/dialogs, and restricted text networking
 to exact HTTPS origins approved by the user.
 
-The next SDK package release is prepared as **0.1.12** across all four packages;
+The next SDK package release is prepared as **0.1.14** across all four packages;
 it has not been published. It adds browser resources for static code-block
 previews on NoteGen desktop **0.38.3 or later**. The resource channel uses its own
-protocol 1; the existing plugin API protocol remains 0.1.9. See
+protocol 1; the plugin API contract includes native HTML export and copying. See
 [the code-block renderer contract](CODE-BLOCK-RENDERERS.md).
 
 The API also provides interactive forms, tables and trees, editor-area plugin tabs,
@@ -297,3 +297,24 @@ SDK 0.1.8 / protocol 0.1.6 adds record workflows, chat drafts, AI generation, pr
 Protocol 0.1.7 adds `documents.render/release`, the runtime-owned `document-preview` UI block, `clipboard.write`, `files.export` and `editor.setStyles/clearStyles`. Rendering accepts Markdown or sanitized HTML with `.article` CSS and explicit image mappings. Clipboard/file output is permission checked and user invoked; editor styles are automatically cleared with the plugin runtime. See [host contract, limits and integration](./HOST-DOCUMENT-INTEGRATION.md).
 
 See the [document publisher example](examples/document-publisher) for Markdown/HTML rendering, raw output and document-handle lifecycle.
+
+## Native HTML export
+
+API 0.1.11 adds `documents.exportHtml` and the `html-export` capability. A plugin
+supplies an editor ID, expected revision and optional CSS/JavaScript. The host
+captures unsaved Markdown, renders it with the native export pipeline, resolves
+authorized local images and shows a save dialog. Rendered HTML and attachments
+stay in the host; only save status, source revision and warnings cross the Worker
+boundary. User code is appended only to the saved file and never runs inside
+NoteGen. See [the host integration contract](HOST-DOCUMENT-INTEGRATION.md#native-html-export-api-0111-development).
+
+API 0.1.12 adds `documents.copyHtml` and `html-copy`: copy the same captured
+Markdown as complete HTML source or as a sanitized rich-text fragment. Copying
+requires `editor.read`, `clipboard.write` and a user-invoked command. Rich text
+does not include or execute JavaScript, may omit nonportable CSS, and returns
+specific warnings when content is degraded. Only metadata and warnings cross the
+Worker boundary; the host writes directly to the system clipboard.
+
+This source preparation is not published. Plugins using copying or multiple form
+submit actions require a matching API 0.1.12 host; installing SDK types does not
+upgrade the app. Existing document rendering and generic output keep their limits.

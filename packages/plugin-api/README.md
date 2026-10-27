@@ -390,3 +390,67 @@ previews for fenced Markdown blocks. The browser resource runs in a host-owned
 sandbox and receives only its matching block; it has no general plugin context.
 See [the development contract](../../CODE-BLOCK-RENDERERS.md) for messages, limits,
 compatibility, lifecycle and validation that remains to be performed.
+
+## Native HTML export (API 0.1.11, development)
+
+Check `supportsCapability(context, 'html-export')` before calling
+`context.documents.exportHtml({ editorId, expectedRevision, fileName?, css?, javascript? })`.
+It captures the requested current editor revision, including unsaved Markdown,
+then performs native rendering and saving without passing large HTML or image
+payloads through the plugin Worker. `editor.read`, `files.export` and a user-invoked
+plugin command are required. Local attachment embedding requires a separate
+`attachments.read` grant for each resolved path; remote resources are not fetched.
+
+The result is `{ saved, editorId, documentId, revision, warnings }`; cancellation
+returns `saved: false`. The source revision describes the captured snapshot, so
+editing after capture does not silently change it. Warnings use
+`asset-not-embedded`, `unsupported-content` or `highlight-fallback`, with an optional
+original document reference. Neither destination nor resolved absolute asset
+paths are exposed. Workspace changes, stopping the plugin or revoking a used
+permission prevent the pending write.
+
+CSS and JavaScript are added only to the final HTML. They never style NoteGen or
+execute during host rendering. `PLUGIN_HTML_EXPORT_LIMITS` permits 2 MiB source
+Markdown, 10,000 UTF-16 code units per code field, a 32 MiB final file, 32 local
+images with 1 MiB per image and 16 MiB combined, and a 30-second render budget.
+There is one export transaction per plugin runtime. Existing `documents.render`
+and `files.export` retain their separate contracts and budgets.
+
+`validatePluginExportHtmlOptions` validates the small RPC shape and rejects unknown
+fields, invalid revisions, nonportable filenames and oversized code. Filenames
+cannot contain directories, control characters or Windows-reserved punctuation,
+or end with a dot or space. Use
+`apiVersion: "^0.1.11"` with a matching host. SDK packages 0.1.14 are source
+preparation; no npm publication or host availability is implied. See
+[the integration notes](../../HOST-DOCUMENT-INTEGRATION.md#native-html-export-api-0111-development).
+
+## Native HTML copy and form actions (API 0.1.12, development)
+
+Check `supportsCapability(context, 'html-copy')`, then call
+`context.documents.copyHtml({ editorId, expectedRevision, css?, javascript?, format })`
+from a user-invoked command. `format: 'source'` writes the complete standalone HTML
+as plain text, including CSS and JavaScript. `format: 'rich-text'` writes portable
+`text/html` and readable plain text; JavaScript is neither executed nor included.
+Portable styles are inlined where possible. The target app may discard styles or
+embedded images. Nonportable CSS, fallback math, omitted scripts and unsupported
+content report `rich-text-css-omitted`, `rich-text-math-fallback`,
+`rich-text-script-omitted` and `rich-text-content-omitted` warnings respectively.
+`additional-warnings` reports that further warnings were grouped to keep the
+response bounded.
+Remote resources are not fetched by the host; any preserved external image URL may
+be loaded later by the destination application.
+
+Copying requires `editor.read` and `clipboard.write`, not `files.export`.
+Attachment reads remain separately scoped. The result is
+`{ copied: true, editorId, documentId, revision, warnings }`; the large HTML is
+kept in the host. The same snapshot, attachment, timeout, cancellation and output
+budgets as native HTML export apply. `validatePluginCopyHtmlOptions` rejects unknown
+fields, unsupported formats, invalid editor revisions and oversized code.
+
+Form blocks may provide `submitActions` with 1–6 unique action IDs; each action
+declares `{ id, label, command, variant?, disabled? }`. When present these actions
+replace the single submit button and invoke declared commands with
+`{ formId, actionId, values, dialogId? }`. Values are validated and captured at the
+button click, rather than using a debounced change callback. `command` and
+`submitLabel` remain required for compatibility. Plugins using either capability
+require API `^0.1.12` and a matching host; these changes are not yet published.

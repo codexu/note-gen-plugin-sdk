@@ -161,3 +161,46 @@ Protocol 0.1.6 adds a host-rendered Kanban block and explicit source-to-plugin d
 ## Document adapters (protocol 0.1.7)
 
 Pass `renderDocument(options)` and `exportFile(options, document?)` in `createPluginTestHost` options. File adapters receive the owned rendered document for document-ID exports and return `{ saved: boolean }`. Rendering adapters return `{ html, text, warnings, title? }`; the host allocates an owned ID. Missing adapters return `UnavailableOnPlatform`, since Node does not implement browser CSS or a save dialog. The shared input validator applies the same transport quotas. Use `host.clipboard`, `host.editorStyles` and `callHistory` to inspect effects. Invoke output through `host.executeCommand`; automatic listeners have no user-action scope. Browser CSS sanitization/layout and real WeChat pasting require host integration verification.
+
+## Native HTML export adapter (API 0.1.11)
+
+Supply `exportHtml(job)` to `createPluginTestHost`. It returns
+`{ saved: boolean, warnings: PluginExportHtmlWarning[] }`; the test host adds the
+captured editor/document IDs and revision. Missing adapters return
+`UnavailableOnPlatform`. Node does not pretend to render Markdown, evaluate CSS
+or JavaScript, embed assets or show a native save dialog.
+
+The job contains frozen `options` and `snapshot`, an optional workspace-relative
+`sourcePath`, a transaction `signal`, `readAttachment(path)` and `assertCanWrite()`.
+Read attachments through the supplied callback to exercise path grants, missing
+files, the 32-image budget, 1 MiB per image and 16 MiB total limits. The adapter
+owns native rendering, its 30-second render budget and the 32 MiB final output
+limit. Call `assertCanWrite()` immediately before simulated output, after any
+asynchronous save-dialog fixture; it rechecks the workspace, runtime and every
+used permission. Observe `signal` if the adapter has ongoing work.
+
+The wrapper checks input shape, `editor.read`, `files.export`, user-command
+authorization, exact source revision, composition state and the 2 MiB Markdown
+budget. It records `documents.exportHtml` and attachment reads in `callHistory`,
+allows only one transaction, and rechecks authorization after the adapter
+returns. Invoke it through `host.executeCommand`; automatic callbacks do not
+gain output authority. A later editor revision does not alter the frozen source.
+Deactivation, a workspace switch or revoking a used permission cancels the pending
+operation. The transaction signal also aborts when the operation ends. Adapter output
+is validated and cannot inject extra result fields or source metadata.
+
+## Native HTML copy adapter (API 0.1.12)
+
+Supply `copyHtml(job)` when testing `documents.copyHtml`. It receives the same
+frozen snapshot, scoped `readAttachment`, transaction signal and `assertCanWrite`
+as `exportHtml`, with `options.format` set to `source` or `rich-text`. The adapter
+simulates native rendering and copying and returns `{ copied: true, warnings }`;
+it must check `assertCanWrite()` immediately before clipboard output. The test host
+does not fake clipboard formatting, browser CSS layout or JavaScript execution.
+
+Copy checks `editor.read`, `clipboard.write` and the user-command scope without
+requiring `files.export`; it shares HTML export's per-runtime transaction limit,
+revision checks, workspace/permission cancellation and attachment budgets. The
+host records `documents.copyHtml` and validates warning/result fields. Rich-text
+warnings include CSS omission, math fallback, script omission and omitted content;
+`additional-warnings` indicates that more warnings were grouped.

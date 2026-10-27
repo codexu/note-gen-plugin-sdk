@@ -1,6 +1,6 @@
 {
   "name": "create-notegen-plugin",
-  "version": "0.1.12",
+  "version": "0.1.14",
   "description": "Create a NoteGen plugin project.",
   "license": "MIT",
   "type": "module",
@@ -32,7 +32,7 @@
     "url": "https://github.com/codexu/note-gen-plugin-sdk/issues"
   },
   "dependencies": {
-    "@notegen/plugin-cli": "workspace:^0.1.12"
+    "@notegen/plugin-cli": "workspace:^0.1.14"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

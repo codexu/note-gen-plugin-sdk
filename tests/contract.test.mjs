@@ -3,6 +3,9 @@ import { test } from 'node:test'
 
 import {
   PLUGIN_API_VERSION,
+  PLUGIN_HTML_EXPORT_LIMITS,
+  validatePluginExportHtmlOptions,
+  validatePluginCopyHtmlOptions,
   registerView,
   readNoteProperties,
   updateNoteProperties,
@@ -48,7 +51,7 @@ const manifest = definePluginManifest({
 })
 
 test('API metadata and manifest validator agree on API 0.1', () => {
-  assert.equal(PLUGIN_API_VERSION, '0.1.9')
+  assert.equal(PLUGIN_API_VERSION, '0.1.12')
   assert.equal(validatePluginManifest(manifest).id, manifest.id)
 })
 
@@ -83,6 +86,262 @@ test('document output uses owned handles, explicit commands and separate grants'
   await assert.rejects(host.executeCommand('com.example.contract.refresh'), error => error.code === 'PermissionDenied')
   await host.context.documents.release(document.id)
   await assert.rejects(host.executeCommand('com.example.contract.refresh'), error => error.code === 'NotFound')
+  await host.deactivate()
+})
+
+const htmlEditor = {
+  windowId: 'main', editorId: 'html-editor', documentId: 'html-note', path: 'Notes/unsaved.md',
+  kind: 'markdown', mode: 'source', revision: 7, composing: false,
+  size: { utf16Length: 0, bytes: 0, lines: 1 },
+}
+const htmlRequest = { editorId: htmlEditor.editorId, expectedRevision: htmlEditor.revision }
+
+test('HTML copy validates its format and rejects file or rendered HTML transport', () => {
+  assert.equal(validatePluginCopyHtmlOptions({ ...htmlRequest, format: 'source', css: 'p { color: red }' }).format, 'source')
+  assert.equal(validatePluginCopyHtmlOptions({ ...htmlRequest, format: 'rich-text', javascript: 'ignored()' }).format, 'rich-text')
+  for (const request of [null, [], htmlRequest, { ...htmlRequest, format: 'html' }, { ...htmlRequest, format: 'source', fileName: 'a.html' }, { ...htmlRequest, format: 'source', html: '<p>x</p>' }]) {
+    assert.throws(() => validatePluginCopyHtmlOptions(request), { code: 'InvalidPath' })
+  }
+  assert.throws(() => validatePluginCopyHtmlOptions({ ...htmlRequest, format: 'source', css: 'x'.repeat(10001) }), { code: 'QuotaExceeded' })
+})
+
+async function createHtmlCopyHost(copyHtml) {
+  const host = createPluginTestHost({
+    manifest: { ...manifest, apiVersion: '^0.1.12', permissions: {
+      'editor.read': { scope: 'active-editor' },
+      'clipboard.write': { scope: 'application' },
+      'attachments.read': { scope: 'workspace-folder', optional: true },
+    } },
+    editor: { active: htmlEditor, text: '# Unsaved content' },
+    copyHtml,
+  })
+  await host.activate({ activate(context) {
+    context.commands.handle('com.example.contract.refresh', argument => context.documents.copyHtml(argument))
+  } })
+  return host
+}
+
+test('HTML copy requires a user command and clipboard grant, not files.export', async () => {
+  let job
+  const host = await createHtmlCopyHost(async current => {
+    job = current
+    assert.equal(current.snapshot.text, '# Unsaved content')
+    assert.equal(Object.isFrozen(current.snapshot), true)
+    current.assertCanWrite()
+    return { copied: true, warnings: [{ code: 'rich-text-script-omitted', message: 'Script omitted' }, { code: 'additional-warnings', message: 'Additional warnings grouped' }] }
+  })
+  const request = { ...htmlRequest, format: 'rich-text', javascript: 'ignored()' }
+  assert.equal(host.context.plugin.capabilities.includes('html-copy'), true)
+  await assert.rejects(host.context.documents.copyHtml(request), { code: 'PermissionDenied' })
+  assert.deepEqual(await host.executeCommand('com.example.contract.refresh', request), {
+    copied: true, editorId: htmlEditor.editorId, documentId: htmlEditor.documentId, revision: 7,
+    warnings: [{ code: 'rich-text-script-omitted', message: 'Script omitted' }, { code: 'additional-warnings', message: 'Additional warnings grouped' }],
+  })
+  assert.throws(() => job.assertCanWrite(), { code: 'Cancelled' })
+  host.setPermission('clipboard.write', false)
+  await assert.rejects(host.executeCommand('com.example.contract.refresh', request), { code: 'PermissionDenied' })
+  await host.deactivate()
+})
+
+test('HTML copy aborts on clipboard revocation without returning adapter content', async () => {
+  let started
+  const ready = new Promise(resolve => { started = resolve })
+  const host = await createHtmlCopyHost(async job => {
+    started(job)
+    return new Promise(() => {})
+  })
+  const pending = host.executeCommand('com.example.contract.refresh', { ...htmlRequest, format: 'source' })
+  const job = await ready
+  host.setPermission('clipboard.write', false)
+  await assert.rejects(pending, { code: 'PermissionDenied' })
+  assert.equal(job.signal.aborted, true)
+  await host.deactivate()
+})
+
+test('form submit actions require unique IDs and declared user commands', async () => {
+  const host = createPluginTestHost({ manifest })
+  await host.activate({ activate() {} })
+  const form = {
+    type: 'form', id: 'export', command: 'com.example.contract.refresh', submitLabel: 'Export',
+    fields: [{ id: 'template', label: 'Template', type: 'select', options: [{ value: 'default', label: 'Default' }] }],
+    submitActions: [{ id: 'file', label: 'Export file', command: 'com.example.contract.refresh' }, { id: 'copy', label: 'Copy', command: 'com.example.contract.refresh', variant: 'secondary' }],
+  }
+  await host.context.ui.views.update('com.example.contract.view', { blocks: [form] })
+  assert.equal(host.views['com.example.contract.view'].blocks[0].submitActions.length, 2)
+  await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks: [{ ...form, submitActions: [form.submitActions[0], form.submitActions[0]] }] }), { code: 'InvalidPath' })
+  await assert.rejects(host.context.ui.views.update('com.example.contract.view', { blocks: [{ ...form, submitActions: [{ ...form.submitActions[0], command: 'other.plugin.command' }] }] }), { code: 'PermissionDenied' })
+  await host.deactivate()
+})
+
+async function createHtmlExportHost(exportHtml, options = {}) {
+  const host = createPluginTestHost({
+    manifest: {
+      ...manifest,
+      apiVersion: '^0.1.11',
+      permissions: {
+        'editor.read': { scope: 'active-editor' },
+        'files.export': { scope: 'application' },
+        'attachments.read': { scope: 'workspace-folder' },
+        'attachments.create': { scope: 'workspace-folder' },
+      },
+    },
+    editor: { active: htmlEditor, text: '# Unsaved content' },
+    exportHtml,
+    ...options,
+  })
+  await host.activate({
+    activate(context) {
+      context.commands.handle('com.example.contract.refresh', argument => context.documents.exportHtml(argument ?? htmlRequest))
+    },
+  })
+  return host
+}
+
+test('HTML export accepts only bounded editor requests and portable filenames', () => {
+  assert.deepEqual(validatePluginExportHtmlOptions({ ...htmlRequest, fileName: '报告.html', css: 'a'.repeat(10000), javascript: '' }).editorId, htmlEditor.editorId)
+  for (const request of [
+    null, [], {}, { ...htmlRequest, html: '<p>untrusted</p>' },
+    { ...htmlRequest, expectedRevision: -1 }, { ...htmlRequest, expectedRevision: NaN },
+    { ...htmlRequest, expectedRevision: 1.5 }, { ...htmlRequest, css: null },
+    { ...htmlRequest, javascript: 1 },
+  ]) assert.throws(() => validatePluginExportHtmlOptions(request), { code: 'InvalidPath' })
+  for (const fileName of ['../report.html', 'a:b.html', 'a?.html', 'a*.html', 'report.', 'report ', '', 'a\u0000.html']) {
+    assert.throws(() => validatePluginExportHtmlOptions({ ...htmlRequest, fileName }), { code: 'InvalidPath' })
+  }
+  for (const field of ['css', 'javascript']) {
+    assert.throws(() => validatePluginExportHtmlOptions({ ...htmlRequest, [field]: 'a'.repeat(PLUGIN_HTML_EXPORT_LIMITS.codeCharacters + 1) }), { code: 'QuotaExceeded' })
+  }
+})
+
+test('HTML export captures unsaved content once and returns metadata without HTML or destination paths', async () => {
+  let job
+  const host = await createHtmlExportHost(async current => {
+    job = current
+    assert.equal(current.snapshot.text, '# Unsaved content')
+    assert.equal(current.sourcePath, 'Notes/unsaved.md')
+    assert.equal(Object.isFrozen(current.snapshot), true)
+    assert.equal(Object.isFrozen(current.options), true)
+    await host.setActiveEditor({ ...htmlEditor, revision: 8 }, { text: '# Later edit' })
+    current.assertCanWrite()
+    return { saved: true, warnings: [{ code: 'highlight-fallback', message: 'Plain code' }] }
+  })
+  assert.equal(host.context.plugin.capabilities.includes('html-export'), true)
+  await assert.rejects(host.context.documents.exportHtml(htmlRequest), { code: 'PermissionDenied' })
+  assert.deepEqual(await host.executeCommand('com.example.contract.refresh'), {
+    saved: true, editorId: htmlEditor.editorId, documentId: htmlEditor.documentId, revision: 7,
+    warnings: [{ code: 'highlight-fallback', message: 'Plain code' }],
+  })
+  assert.equal(host.callHistory.filter(call => call.name === 'documents.exportHtml').length, 1)
+  assert.equal(job.signal.aborted, true)
+  assert.throws(() => job.assertCanWrite(), { code: 'Cancelled' })
+  await host.deactivate()
+})
+
+test('HTML export requires an adapter, validates its result, and preserves save cancellation', async () => {
+  const missing = await createHtmlExportHost()
+  await assert.rejects(missing.executeCommand('com.example.contract.refresh'), { code: 'UnavailableOnPlatform' })
+  await missing.deactivate()
+  const cancelled = await createHtmlExportHost(async () => ({ saved: false, warnings: [] }))
+  assert.deepEqual(await cancelled.executeCommand('com.example.contract.refresh'), {
+    saved: false, editorId: htmlEditor.editorId, documentId: htmlEditor.documentId, revision: 7, warnings: [],
+  })
+  await cancelled.deactivate()
+  const invalid = await createHtmlExportHost(async () => ({ saved: true, warnings: [], destination: '/private/report.html' }))
+  await assert.rejects(invalid.executeCommand('com.example.contract.refresh'), { code: 'RuntimeFailure' })
+  await invalid.deactivate()
+})
+
+test('HTML export rejects stale, composing, oversized and unauthorized sources before invoking the adapter', async () => {
+  let calls = 0
+  const adapter = async () => { calls++; return { saved: true, warnings: [] } }
+  const host = await createHtmlExportHost(adapter)
+  await assert.rejects(host.executeCommand('com.example.contract.refresh', { ...htmlRequest, expectedRevision: 6 }), { code: 'StaleRevision' })
+  await assert.rejects(host.executeCommand('com.example.contract.refresh', { ...htmlRequest, editorId: 'different-editor' }), { code: 'NotFound' })
+  await host.setActiveEditor({ ...htmlEditor, composing: true }, { text: 'Composing' })
+  await assert.rejects(host.executeCommand('com.example.contract.refresh'), { code: 'EditorBusy' })
+  await host.setActiveEditor(htmlEditor, { text: 'Stable' })
+  host.setPermission('files.export', false)
+  await assert.rejects(host.executeCommand('com.example.contract.refresh'), { code: 'PermissionDenied' })
+  host.setPermission('files.export', true)
+  host.setPermission('editor.read', false)
+  await assert.rejects(host.executeCommand('com.example.contract.refresh'), { code: 'PermissionDenied' })
+  await host.deactivate()
+  const oversized = await createHtmlExportHost(adapter, { editor: { active: htmlEditor, text: 'a'.repeat(PLUGIN_HTML_EXPORT_LIMITS.markdownBytes + 1) } })
+  await assert.rejects(oversized.executeCommand('com.example.contract.refresh'), { code: 'QuotaExceeded' })
+  assert.equal(calls, 0)
+  await oversized.deactivate()
+})
+
+test('HTML export attachment grants are separate and revocation cancels pending output', async () => {
+  let entered
+  let finish
+  let job
+  const started = new Promise(resolve => { entered = resolve })
+  const host = await createHtmlExportHost(async current => {
+    job = current
+    await assert.rejects(current.readAttachment('Private/image.png'), { code: 'PermissionDenied' })
+    const image = await current.readAttachment('Notes/image.png')
+    assert.equal(image.size, 1)
+    entered()
+    return new Promise(resolve => { finish = resolve })
+  }, { permissions: { 'attachments.read': { granted: true, paths: ['Notes'] } } })
+  await host.context.attachments.create({ path: 'Notes/image.png', base64: 'AA==' })
+  const pending = host.executeCommand('com.example.contract.refresh')
+  await started
+  const rejected = assert.rejects(pending, { code: 'PermissionDenied' })
+  host.setPermission('attachments.read', { granted: true, paths: ['Elsewhere'] })
+  await rejected
+  assert.equal(job.signal.aborted, true)
+  assert.throws(() => job.assertCanWrite(), { code: 'Cancelled' })
+  finish({ saved: true, warnings: [] })
+  await host.deactivate()
+})
+
+test('HTML export cancels on workspace switches and shutdown without waiting for an adapter', async t => {
+  for (const reason of ['workspace', 'shutdown']) {
+    await t.test(reason, async () => {
+      let entered
+      let finish
+      let job
+      const started = new Promise(resolve => { entered = resolve })
+      const host = await createHtmlExportHost(async current => {
+        job = current
+        entered()
+        return new Promise(resolve => { finish = resolve })
+      })
+      const pending = host.executeCommand('com.example.contract.refresh')
+      await started
+      const rejected = assert.rejects(pending, { code: reason === 'workspace' ? 'WorkspaceChanged' : 'Cancelled' })
+      if (reason === 'workspace') {
+        const previous = await host.context.workspace.getCurrent()
+        await host.emitWorkspaceChange({ previous, current: { id: 'other-workspace', name: 'Other' } })
+      } else await host.deactivate()
+      await rejected
+      assert.equal(job.signal.aborted, true)
+      assert.throws(() => job.assertCanWrite(), { code: 'Cancelled' })
+      finish({ saved: true, warnings: [] })
+      await host.deactivate()
+    })
+  }
+})
+
+test('HTML export allows one transaction per runtime and releases it after cancellation', async () => {
+  let entered
+  let finish
+  const started = new Promise(resolve => { entered = resolve })
+  const host = await createHtmlExportHost(async () => {
+    entered()
+    return new Promise(resolve => { finish = resolve })
+  })
+  const first = host.executeCommand('com.example.contract.refresh')
+  await started
+  await assert.rejects(host.executeCommand('com.example.contract.refresh'), { code: 'QuotaExceeded' })
+  finish({ saved: false, warnings: [] })
+  assert.equal((await first).saved, false)
+  const second = host.executeCommand('com.example.contract.refresh')
+  await new Promise(resolve => setImmediate(resolve))
+  finish({ saved: false, warnings: [] })
+  assert.equal((await second).saved, false)
   await host.deactivate()
 })
 
